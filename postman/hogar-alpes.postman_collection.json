@@ -1,0 +1,514 @@
+{
+  "info": {
+    "name": "Hogar de los Alpes — Gestión de Trabajos",
+    "description": "Escenarios de calidad implementados en el servicio Gestión de Trabajos (Entrega 3, MISW4406).\n\nLas carpetas están ordenadas para correrse de arriba abajo con el Collection Runner: la primera guarda el id del trabajo en una variable y las siguientes lo reutilizan.\n\nRequiere el servicio en marcha:\n\n    docker compose up --build\n\nVariable `baseUrl` por defecto: http://localhost:8000",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8000", "type": "string" },
+    { "key": "trabajoId", "value": "", "type": "string" },
+    { "key": "trabajoNormalId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0 · Salud del servicio",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+            "description": "Comprueba que el servicio está arriba antes de correr el resto."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('el servicio se identifica', () => {",
+                  "    pm.expect(pm.response.json().service).to.eql('gestion-trabajos');",
+                  "    pm.expect(pm.response.json().status).to.eql('up');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Escenario 7 · Escalabilidad — absorber el pico sin rechazar",
+      "description": "La creación responde 202 Accepted y difiere el procesamiento aguas abajo. La medida de la respuesta del escenario exige < 500 ms en el p95: el test lo verifica en cada llamada.",
+      "item": [
+        {
+          "name": "POST /trabajos — siniestro por granizada (202)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": \"B2B2C\",\n  \"partner_id\": \"seguros-alpes\",\n  \"referencia_externa\": \"SIN-99123\",\n  \"categoria\": \"SINIESTRO_GRANIZO\",\n  \"urgencia\": \"CRITICA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 71-21\",\n  \"descripcion\": \"Granizada: techo perforado, filtración en dos habitaciones\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/trabajos", "host": ["{{baseUrl}}"], "path": ["trabajos"] },
+            "description": "Comando CrearTrabajo. El servicio acepta y confirma de inmediato; el emparejamiento, la cotización y la notificación se difieren."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted — se acepta, no se procesa en línea', () => pm.response.to.have.status(202));",
+                  "pm.test('confirmación en menos de 500 ms (medida del escenario 7)', () => {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(500);",
+                  "});",
+                  "const cuerpo = pm.response.json();",
+                  "pm.test('devuelve el id del trabajo', () => pm.expect(cuerpo.id).to.be.a('string').and.not.empty);",
+                  "pm.test('nace en estado CREADO', () => pm.expect(cuerpo.estado).to.eql('CREADO'));",
+                  "pm.collectionVariables.set('trabajoId', cuerpo.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /trabajos/{id} — consulta (lado de lectura del CQS)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trabajos/{{trabajoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["trabajos", "{{trabajoId}}"]
+            },
+            "description": "Consulta ObtenerTrabajo. Síncrona a propósito: no muta estado ni publica eventos."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test('es el trabajo que se creó', () => pm.expect(t.id).to.eql(pm.collectionVariables.get('trabajoId')));",
+                  "pm.test('conserva el canal y el partner', () => {",
+                  "    pm.expect(t.canal).to.eql('B2B2C');",
+                  "    pm.expect(t.partner_id).to.eql('seguros-alpes');",
+                  "});",
+                  "pm.test('la ubicación viaja como objeto valor', () => {",
+                  "    pm.expect(t.ubicacion.pais).to.eql('CO');",
+                  "    pm.expect(t.ubicacion.ciudad).to.eql('Bogota');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /trabajos?estado=CREADO — consulta por estado",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trabajos?estado=CREADO",
+              "host": ["{{baseUrl}}"],
+              "path": ["trabajos"],
+              "query": [{ "key": "estado", "value": "CREADO" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('devuelve una lista', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Eventos de dominio entre módulos",
+      "description": "El módulo `operaciones` no importa una sola línea del módulo `trabajos`: se enteró de que el trabajo existe porque recibió el evento de dominio TrabajoCreado que emitió la Unidad de Trabajo antes del commit.\n\nQue este endpoint responda 200 es la prueba de que el evento cruzó.",
+      "item": [
+        {
+          "name": "GET /trabajos/{id}/seguimiento — lo abrió el OTRO módulo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trabajos/{{trabajoId}}/seguimiento",
+              "host": ["{{baseUrl}}"],
+              "path": ["trabajos", "{{trabajoId}}", "seguimiento"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK — el evento de dominio cruzó entre módulos', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('el seguimiento apunta al trabajo', () => pm.expect(s.trabajo_id).to.eql(pm.collectionVariables.get('trabajoId')));",
+                  "pm.test('urgencia CRITICA se tradujo a prioridad P1 y SLA de 60 min', () => {",
+                  "    pm.expect(s.prioridad).to.eql('P1');",
+                  "    pm.expect(s.minutos_sla).to.eql(60);",
+                  "});",
+                  "pm.test('la política de SLA es del módulo operaciones, no de trabajos', () => {",
+                  "    pm.expect(s.estado_trabajo).to.eql('CREADO');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Escenario 3 · Modificabilidad — ciclo de vida del Trabajo",
+      "description": "Las transiciones válidas viven en el objeto valor EstadoTrabajo. Agregar un estado nuevo —EN_VERIFICACION, el del escenario 3— fue tocar únicamente ese archivo.",
+      "item": [
+        {
+          "name": "PUT estado → EMPAREJANDO (transición válida, 202)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"estado\": \"EMPAREJANDO\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/trabajos/{{trabajoId}}/estado",
+              "host": ["{{baseUrl}}"],
+              "path": ["trabajos", "{{trabajoId}}", "estado"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "pm.test('el estado avanzó', () => pm.expect(pm.response.json().estado).to.eql('EMPAREJANDO'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT estado → COMPLETADO (transición inválida, 409)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"estado\": \"COMPLETADO\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/trabajos/{{trabajoId}}/estado",
+              "host": ["{{baseUrl}}"],
+              "path": ["trabajos", "{{trabajoId}}", "estado"]
+            },
+            "description": "De EMPAREJANDO no se puede saltar a COMPLETADO. La regla TransicionDeEstadoValida lo rechaza dentro de la agregación, no en el API."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict — la agregación protege su invariante', () => pm.response.to.have.status(409));",
+                  "pm.test('el mensaje nombra la transición prohibida', () => {",
+                  "    pm.expect(pm.response.json().error).to.include('EMPAREJANDO');",
+                  "    pm.expect(pm.response.json().error).to.include('COMPLETADO');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT estado → ASIGNADO (avanza el ciclo)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"estado\": \"ASIGNADO\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/trabajos/{{trabajoId}}/estado",
+              "host": ["{{baseUrl}}"],
+              "path": ["trabajos", "{{trabajoId}}", "estado"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('202 Accepted', () => pm.response.to.have.status(202));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT estado → EN_EJECUCION",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"estado\": \"EN_EJECUCION\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/trabajos/{{trabajoId}}/estado",
+              "host": ["{{baseUrl}}"],
+              "path": ["trabajos", "{{trabajoId}}", "estado"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('202 Accepted', () => pm.response.to.have.status(202));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT estado → EN_VERIFICACION (el estado NUEVO del escenario 3)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"estado\": \"EN_VERIFICACION\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/trabajos/{{trabajoId}}/estado",
+              "host": ["{{baseUrl}}"],
+              "path": ["trabajos", "{{trabajoId}}", "estado"]
+            },
+            "description": "Este es el estado que el escenario 3 propone agregar. Incorporarlo fue editar el grafo TRANSICIONES del objeto valor: ningún otro servicio ni módulo cambió."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted — el estado nuevo funciona', () => pm.response.to.have.status(202));",
+                  "pm.test('el ciclo de vida lo aceptó', () => pm.expect(pm.response.json().estado).to.eql('EN_VERIFICACION'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET seguimiento — operaciones siguió el cambio de estado",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trabajos/{{trabajoId}}/seguimiento",
+              "host": ["{{baseUrl}}"],
+              "path": ["trabajos", "{{trabajoId}}", "seguimiento"]
+            },
+            "description": "El módulo operaciones nunca supo del estado EN_VERIFICACION en tiempo de diseño y aun así lo registró: lee el evento por atributos, no por tipo (tolerant reader)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('operaciones registró el estado nuevo sin conocerlo de antemano', () => {",
+                  "    pm.expect(pm.response.json().estado_trabajo).to.eql('EN_VERIFICACION');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Escenario 2 · Modificabilidad — reglas regionales por sidecar",
+      "description": "Las categorías y urgencias permitidas las aporta el sidecar regional, no el dominio. Incorporar un país nuevo es agregar una entrada a reglas_regionales.json: cero archivos del servicio base modificados.",
+      "item": [
+        {
+          "name": "POST — SINIESTRO_GRANIZO en Colombia (permitido, 202)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": \"MARKETPLACE\",\n  \"categoria\": \"SINIESTRO_GRANIZO\",\n  \"urgencia\": \"ALTA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Calle 100 # 15-20\",\n  \"descripcion\": \"Daño en tejado por granizo\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/trabajos", "host": ["{{baseUrl}}"], "path": ["trabajos"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 — la categoría sí aplica en CO', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST — SINIESTRO_GRANIZO en México (NO permitido, 400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": \"MARKETPLACE\",\n  \"categoria\": \"SINIESTRO_GRANIZO\",\n  \"urgencia\": \"ALTA\",\n  \"pais\": \"MX\",\n  \"ciudad\": \"CDMX\",\n  \"direccion\": \"Reforma 100\",\n  \"descripcion\": \"Mismo payload, otro país\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/trabajos", "host": ["{{baseUrl}}"], "path": ["trabajos"] },
+            "description": "Idéntico al anterior salvo el país. México no tiene la categoría de granizo; sí tiene SISMO. La regla la impone el sidecar, no un `if` en el código."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 — el sidecar regional lo rechaza', () => pm.response.to.have.status(400));",
+                  "pm.test('el error nombra la categoría y la región', () => {",
+                  "    pm.expect(pm.response.json().error).to.include('SINIESTRO_GRANIZO');",
+                  "    pm.expect(pm.response.json().error).to.include('región');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST — SISMO en México (permitido, 202)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": \"MARKETPLACE\",\n  \"categoria\": \"SISMO\",\n  \"urgencia\": \"CRITICA\",\n  \"pais\": \"MX\",\n  \"ciudad\": \"CDMX\",\n  \"direccion\": \"Reforma 100\",\n  \"descripcion\": \"Revisión estructural post-sismo\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/trabajos", "host": ["{{baseUrl}}"], "path": ["trabajos"] },
+            "description": "La categoría que sí existe en México. Mismo servicio, mismo código, reglas distintas."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 — SISMO sí aplica en MX', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST — urgencia BAJA en México (NO permitida, 400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": \"MARKETPLACE\",\n  \"categoria\": \"PLOMERIA\",\n  \"urgencia\": \"BAJA\",\n  \"pais\": \"MX\",\n  \"ciudad\": \"Monterrey\",\n  \"direccion\": \"Av Constitución 300\",\n  \"descripcion\": \"México solo maneja CRITICA, ALTA y NORMAL\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/trabajos", "host": ["{{baseUrl}}"], "path": ["trabajos"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 — la urgencia tampoco aplica', () => pm.response.to.have.status(400));",
+                  "pm.test('el error habla de urgencia', () => pm.expect(pm.response.json().error).to.include('urgencia'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST — país no configurado, cae al contrato por defecto (202)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": \"MARKETPLACE\",\n  \"categoria\": \"PLOMERIA\",\n  \"urgencia\": \"NORMAL\",\n  \"pais\": \"PE\",\n  \"ciudad\": \"Lima\",\n  \"direccion\": \"Av Arequipa 1200\",\n  \"descripcion\": \"Perú aún no está configurado en el sidecar\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/trabajos", "host": ["{{baseUrl}}"], "path": ["trabajos"] },
+            "description": "Perú no tiene entrada propia, así que el sidecar responde con el contrato `_default`. Incorporarlo de verdad = agregar la clave PE al JSON y reiniciar el sidecar. Ningún archivo del servicio base cambia: eso es exactamente la medida del escenario 2."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 — el contrato por defecto lo acepta', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Validaciones del dominio",
+      "item": [
+        {
+          "name": "POST — ubicación incompleta (400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canal\": \"MARKETPLACE\",\n  \"categoria\": \"PLOMERIA\",\n  \"urgencia\": \"NORMAL\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"\",\n  \"direccion\": \"\",\n  \"descripcion\": \"Sin ciudad ni dirección\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/trabajos", "host": ["{{baseUrl}}"], "path": ["trabajos"] },
+            "description": "La regla UbicacionCompleta corre dentro de la agregación. Un trabajo no puede nacer en un estado inválido."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 — la agregación rechaza el estado inválido', () => pm.response.to.have.status(400));",
+                  "pm.test('el error habla de la ubicación', () => pm.expect(pm.response.json().error.toLowerCase()).to.include('ubicación'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /trabajos/{id} inexistente (404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trabajos/00000000-0000-0000-0000-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["trabajos", "00000000-0000-0000-0000-000000000000"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

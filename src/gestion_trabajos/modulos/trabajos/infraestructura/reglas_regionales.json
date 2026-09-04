@@ -1,0 +1,22 @@
+{
+  "_default": {
+    "categorias": ["PLOMERIA", "ELECTRICIDAD", "CERRAJERIA", "LIMPIEZA"],
+    "urgencias": ["CRITICA", "ALTA", "NORMAL", "BAJA"]
+  },
+  "CO": {
+    "categorias": ["PLOMERIA", "ELECTRICIDAD", "CERRAJERIA", "LIMPIEZA", "REMODELACION", "SINIESTRO_GRANIZO"],
+    "urgencias": ["CRITICA", "ALTA", "NORMAL", "BAJA"]
+  },
+  "MX": {
+    "categorias": ["PLOMERIA", "ELECTRICIDAD", "CERRAJERIA", "LIMPIEZA", "SISMO"],
+    "urgencias": ["CRITICA", "ALTA", "NORMAL"]
+  },
+  "BR": {
+    "categorias": ["PLOMERIA", "ELECTRICIDAD", "LIMPEZA", "ALAGAMENTO"],
+    "urgencias": ["CRITICA", "ALTA", "NORMAL", "BAJA"]
+  },
+  "AR": {
+    "categorias": ["PLOMERIA", "ELECTRICIDAD", "CERRAJERIA", "GAS"],
+    "urgencias": ["CRITICA", "ALTA", "NORMAL"]
+  }
+}
