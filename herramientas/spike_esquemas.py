@@ -18,6 +18,10 @@ import pulsar
 from pulsar.schema import AvroSchema, Long, Record, String
 
 SERVICIO = 'pulsar://localhost:6650'
+# Desde el host hay que pedir el listener `external`: los brokers anuncian su
+# dirección interna (broker-N:6650), que no resuelve fuera de la red de Docker.
+# Ver docs/decisiones.md · INF-2.
+LISTENER = 'external'
 BASE = f'persistent://public/default/spike-{int(time.time())}'
 
 R = {}
@@ -161,7 +165,7 @@ def exp_e_incompatible(cliente, topico, V1):
 def main():
     exp_a_defaults()
 
-    cliente = pulsar.Client(SERVICIO, operation_timeout_seconds=15)
+    cliente = pulsar.Client(SERVICIO, listener_name=LISTENER, operation_timeout_seconds=15)
     try:
         titulo('B · Evolución SIN default explícito')
         V1, V2 = clases_sin_default()

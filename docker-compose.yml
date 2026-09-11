@@ -1,4 +1,142 @@
+# Hogar de los Alpes — Entrega 4
+#
+# Clúster de Apache Pulsar: ZooKeeper (metadatos) · 2 bookies (el log durable) ·
+# 2 brokers. Los quórums ensemble=2 / write=2 / ack=2 hacen que cada entrada del
+# log quede en los DOS bookies antes de confirmarle al productor: eso es la
+# durabilidad sobre la que se apoya el escenario 6, no una palabra en una lámina.
+#
+# Listeners: dentro de la red de Docker los servicios hablan con broker-1:6650 y
+# broker-2:6650 (listener `internal`). Desde el host, las herramientas usan
+# pulsar://localhost:6650,localhost:6651 con listener_name="external". Sin esa
+# distinción, el broker le devolvería a un cliente del host una dirección
+# (broker-2) que no puede resolver.
+
 services:
+  # --------------------------------------------------------------- Pulsar
+  zookeeper:
+    image: apachepulsar/pulsar:3.2.2
+    container_name: hda-zookeeper
+    restart: on-failure
+    networks: [red-broker]
+    volumes:
+      - zkdata:/pulsar/data
+    environment:
+      metadataStoreUrl: zk:zookeeper:2181
+      PULSAR_MEM: -Xms256m -Xmx512m
+    command: >
+      bash -c "bin/apply-config-from-env.py conf/zookeeper.conf &&
+               bin/generate-zookeeper-config.sh conf/zookeeper.conf &&
+               exec bin/pulsar zookeeper"
+    healthcheck:
+      test: ["CMD", "bin/pulsar-zookeeper-ruok.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # Una sola ejecución: registra el clúster en los metadatos. Si ya existe, no
+  # falla el arranque.
+  pulsar-init:
+    image: apachepulsar/pulsar:3.2.2
+    container_name: hda-pulsar-init
+    networks: [red-broker]
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    # En una sola línea a propósito: con `>` de YAML, las líneas más indentadas
+    # conservan el salto y bash tomaría cada `--bandera` como una orden suelta.
+    # Las banderas son las de Pulsar 3.x: `--zookeeper` y `--configuration-store`
+    # ya no existen.
+    command: >
+      bash -c "bin/pulsar initialize-cluster-metadata --cluster cluster-hda --metadata-store zk:zookeeper:2181 --configuration-metadata-store zk:zookeeper:2181 --web-service-url http://broker-1:8080 --broker-service-url pulsar://broker-1:6650 || echo 'metadatos ya inicializados'"
+
+  bookie-1: &bookie
+    image: apachepulsar/pulsar:3.2.2
+    container_name: hda-bookie-1
+    restart: on-failure
+    networks: [red-broker]
+    volumes:
+      - bookie1data:/pulsar/data
+    environment: &bookie-env
+      clusterName: cluster-hda
+      zkServers: zookeeper:2181
+      metadataServiceUri: metadata-store:zk:zookeeper:2181
+      advertisedAddress: bookie-1
+      # En Docker Desktop el volumen suele ir lleno; con el umbral por defecto el
+      # bookie pasaría a solo-lectura y el escenario 6 fallaría por una causa que
+      # no tiene nada que ver con la arquitectura.
+      diskUsageThreshold: "0.99"
+      diskUsageWarnThreshold: "0.99"
+      BOOKIE_MEM: -Xms256m -Xmx512m -XX:MaxDirectMemorySize=256m
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+      pulsar-init:
+        condition: service_completed_successfully
+    command: >
+      bash -c "bin/apply-config-from-env.py conf/bookkeeper.conf &&
+               exec bin/pulsar bookie"
+
+  bookie-2:
+    <<: *bookie
+    container_name: hda-bookie-2
+    volumes:
+      - bookie2data:/pulsar/data
+    environment:
+      <<: *bookie-env
+      advertisedAddress: bookie-2
+
+  broker-1: &broker
+    image: apachepulsar/pulsar:3.2.2
+    container_name: hda-broker-1
+    restart: on-failure
+    networks: [red-broker]
+    ports:
+      - "6650:6650"
+      - "8080:8080"
+    environment: &broker-env
+      clusterName: cluster-hda
+      zookeeperServers: zookeeper:2181
+      metadataStoreUrl: zk:zookeeper:2181
+      configurationMetadataStoreUrl: zk:zookeeper:2181
+      advertisedAddress: broker-1
+      internalListenerName: internal
+      advertisedListeners: internal:pulsar://broker-1:6650,external:pulsar://localhost:6650
+      # Cada entrada del log, en los dos bookies antes de confirmar (escenario 6)
+      managedLedgerDefaultEnsembleSize: "2"
+      managedLedgerDefaultWriteQuorum: "2"
+      managedLedgerDefaultAckQuorum: "2"
+      # Los tópicos los crea el script de INF-3, no un nombre mal escrito
+      allowAutoTopicCreation: "false"
+      brokerDeleteInactiveTopicsEnabled: "false"
+      PULSAR_MEM: -Xms512m -Xmx1g -XX:MaxDirectMemorySize=512m
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+      bookie-1:
+        condition: service_started
+      bookie-2:
+        condition: service_started
+    command: >
+      bash -c "bin/apply-config-from-env.py conf/broker.conf &&
+               exec bin/pulsar broker"
+    healthcheck:
+      test: ["CMD-SHELL", "bin/pulsar-admin brokers healthcheck || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+  broker-2:
+    <<: *broker
+    container_name: hda-broker-2
+    ports:
+      - "6651:6650"
+      - "8081:8080"
+    environment:
+      <<: *broker-env
+      advertisedAddress: broker-2
+      advertisedListeners: internal:pulsar://broker-2:6650,external:pulsar://localhost:6651
+
+  # --------------------------------------------------------------- Servicios
   postgres:
     image: postgres:16-alpine
     environment:
@@ -15,23 +153,14 @@ services:
       timeout: 5s
       retries: 10
 
-  pulsar:
-    image: apachepulsar/pulsar:3.2.2
-    command: bin/pulsar standalone
-    ports:
-      - "6650:6650"
-      - "8080:8080"
-    healthcheck:
-      test: ["CMD-SHELL", "bin/pulsar-admin brokers healthcheck || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-
   gestion-trabajos:
     build: ./servicios/gestion_trabajos
+    # Se une a red-broker para alcanzar los brokers, y a la red por defecto para
+    # su base de datos. INF-5 separa una red por servicio.
+    networks: [red-broker, default]
     environment:
       DATABASE_URI: postgresql+psycopg2://hogaralpes:hogaralpes@postgres:5432/gestion_trabajos
-      BROKER_HOST: pulsar
+      BROKER_HOST: broker-1
       CONSUMIR_COMANDOS: "true"
       FLASK_DEBUG: "1"
     ports:
@@ -40,8 +169,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      pulsar:
-        condition: service_started
+      broker-1:
+        condition: service_healthy
+
+networks:
+  red-broker:
 
 volumes:
   pgdata:
+  zkdata:
+  bookie1data:
+  bookie2data:

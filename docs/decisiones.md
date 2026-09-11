@@ -43,3 +43,39 @@ Responde con evidencia a dos preguntas que el tutor puede hacer:
 
 - *«¿Cómo saben que su esquema puede evolucionar sin romper a los consumidores?»* → Está probado en las dos direcciones, y el registro guarda las dos versiones.
 - *«¿Qué pasa si alguien publica un cambio incompatible?»* → El broker lo rechaza. No depende de que el equipo se acuerde de revisarlo.
+
+---
+
+## INF-2 · Clúster de Pulsar: dos consecuencias verificadas
+
+**Fecha:** 2026-09-11 · **Estado del clúster:** `cluster-hda` con 1 ZooKeeper, **2 bookies** y **2 brokers** sanos, quórums ensemble 2 / escritura 2 / confirmación 2.
+
+### 1. Las herramientas que corren desde el host necesitan `listener_name="external"`
+
+Cada broker anuncia dos direcciones: `internal:pulsar://broker-N:6650` para quien vive en la red de Docker, y `external:pulsar://localhost:665X` para quien llama desde el host. Un cliente que no elige listener recibe la interna y falla, porque `broker-2` no resuelve fuera de Docker.
+
+| Desde el host | Resultado |
+|---|---|
+| `pulsar.Client('pulsar://localhost:6650')` | **Falla** — `ConnectError`, tras intentar `pulsar://broker-2:6650` |
+| `pulsar.Client('pulsar://localhost:6650', listener_name='external')` | **Publica** |
+
+**Regla:** todo lo que corra desde el host —`spike_esquemas.py`, `generador_carga.py`, `medir_latencia.py`— usa `listener_name="external"`. Los servicios, que corren dentro de Docker, no lo usan.
+
+No es un rodeo: es la forma en que Pulsar resuelve que un mismo broker se vea distinto desde adentro y desde afuera del clúster. En AWS será igual, con la IP pública como dirección externa.
+
+### 2. Sin creación automática de tópicos, la brecha G-3b deja de ser teórica
+
+El clúster tiene `allowAutoTopicCreation=false` (los tópicos los crea el script de INF-3). Con esa configuración, el código actual de Gestión de Trabajos muestra dos comportamientos que conviene ver ahora y no el día de la sustentación:
+
+| Qué pasa | Evidencia | Cuándo se corrige |
+|---|---|---|
+| El evento de integración **se pierde en silencio**: el despachador registra `WARNING · No se pudo publicar en evt-trabajo-creado: TopicNotFound` y el `POST` igual responde `202` | Brecha **G-3b** de la especificación | INF-3 crea los tópicos. La pérdida ante un broker caído queda como riesgo **R-3** (fuera de alcance: es *outbox*) |
+| El consumidor de comandos **muere y no vuelve**: `Error suscribiéndose al tópico de comandos · TopicNotFound`, y el hilo termina | `consumidores.py:57-60` atrapa la excepción fuera del bucle | **GT-1**: el consumidor pasa a proceso propio y debe reintentar la suscripción, no rendirse |
+
+La segunda es un defecto real que no estaba en la lista de brechas: hoy, cualquier error transitorio del broker al arrancar deja el servicio sin consumir comandos **para siempre**, sin que nadie se entere. Se agrega al alcance de GT-1.
+
+### 3. `public/default` queda como namespace de experimentos
+
+La creación automática de tópicos se habilita **solo** en `public/default`, para que los experimentos —el spike, y mañana las pruebas sueltas— no tengan que pedir sus tópicos por adelantado. Los namespaces de la solución (`hogar-alpes/*`, que crea INF-3) la mantienen **deshabilitada**: ahí un nombre mal escrito debe fallar, no crear un tópico fantasma sin particiones ni suscripciones.
+
+Con esa configuración, el spike se volvió a correr **contra el clúster** (no contra el standalone) y dio los cinco mismos resultados: el hallazgo de `required_default` no era un artefacto del entorno de desarrollo.
