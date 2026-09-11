@@ -2,7 +2,7 @@
 
 | Proyecto | Estado | Base | Entrega | Equipo |
 |---|---|---|---|---|
-| Hogar de los Alpes | **Borrador para aprobación** | `01-especificacion.md` (aprobada) | **2026-09-13** | Stiven Cardona · Juan Manuel Domínguez · Andrés Gómez |
+| Hogar de los Alpes | **Aprobado** (2026-09-11) | `01-especificacion.md` (aprobada) | **2026-09-13** | Stiven Cardona · Juan Manuel Domínguez · Andrés Gómez |
 
 Abreviaturas: **GT** `gestion_trabajos` · **OPS** `operaciones` · **EMP** `emparejamiento` · **ACR** `acreditacion`. Los `CA-*`, `RNF-*`, `RS-*` y `G-*` remiten a la especificación.
 
@@ -113,12 +113,15 @@ La demostración CA-E1 depende de un comportamiento concreto del cliente `pulsar
 2. ¿En qué orden serializa `Record` los campos: declaración o alfabético?
 3. ¿Con `FULL_TRANSITIVE` y la actualización automática de esquema habilitada, el productor con un campo nuevo se registra solo?
 
-| Resultado del spike | Regla de evolución que queda |
-|---|---|
-| El cliente resuelve con el esquema del escritor | Agregar o quitar campos opcionales en cualquier posición |
-| No lo resuelve | Campos nuevos **solo al final** del record de nivel superior, siempre opcionales. El consumidor elige su record por la versión de esquema del mensaje. Se documenta como restricción del cliente Python |
+**Ejecutado el 2026-09-11.** Resultado completo en `docs/decisiones.md`; script reproducible en `herramientas/spike_esquemas.py`. Resumen:
 
-El resultado queda escrito en `docs/decisiones.md`. En la sustentación es una respuesta concreta a *«¿cómo sabían que la evolución funcionaba?»*.
+| Pregunta | Respuesta |
+|---|---|
+| ¿Lee en las dos direcciones? | **Sí**: lector nuevo sobre dato viejo y lector viejo sobre dato nuevo, ambos funcionan |
+| Orden de campos | **De declaración** (no usar `_sorted_fields`) |
+| ¿Se registra solo el campo nuevo? | **Sí, pero solo si el campo lleva `default`** |
+
+**El hallazgo que cambia los contratos:** `pulsar.schema` emite `"default"` únicamente cuando el campo se declara con `required_default=True`. Con `String()` a secas, el broker **rechaza** agregar un campo opcional. Por lo tanto, **todo campo de un contrato se declara `Tipo(default=None, required_default=True)`** — CON-1 y la migración de los contratos existentes se hacen con esa regla.
 
 ---
 
