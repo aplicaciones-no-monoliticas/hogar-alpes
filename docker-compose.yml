@@ -28,7 +28,7 @@ services:
       retries: 10
 
   gestion-trabajos:
-    build: .
+    build: ./servicios/gestion_trabajos
     environment:
       DATABASE_URI: postgresql+psycopg2://hogaralpes:hogaralpes@postgres:5432/gestion_trabajos
       BROKER_HOST: pulsar
