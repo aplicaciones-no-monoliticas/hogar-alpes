@@ -164,3 +164,27 @@ Se descartó la alternativa de anidar el sobre como sub-record (`sobre = Mensaje
 | `cmd-acreditacion` | 17 / 17 | completo | 4 campos intactos |
 | `evt-acreditacion` | 17 / 17 | completo | 4 campos intactos |
 | `evt-emparejamiento` | 15 / 15 | completo | 4 campos intactos |
+
+---
+
+## INF-3 · La cuota de backlog está acoplada a la retención
+
+**Fecha:** 2026-09-11 · **Dónde:** `infra/pulsar/` · **Verificable con:** `docker compose run --rm pulsar-config`
+
+La política de backlog es la que sostiene la respuesta del escenario 6: al desalojar lo más viejo en vez de retener al productor, una caída larga del reactor **no degrada a Gestión de Trabajos**. Aplicarla costó tres intentos, y los tres motivos valen para la sustentación.
+
+| Intento | Qué pasó | Causa real |
+|---|---|---|
+| 1 | `Need to provide just 1 parameter` | La bandera `--limitSize` no existe en 3.2.2: es `-l/--limit` |
+| 2 | `HTTP 412 · Backlog Quota exceeds configured retention quota` | El script aplicaba la cuota **antes** que la retención, y Pulsar valida una contra otra |
+| 3 | El mismo 412, con retención 10G y cuota 10G | La comparación es **estricta**: `10G < 10G` es falso |
+
+**La decisión:** se dimensiona la retención **por encima** de la cuota (20G frente a 10G), no al revés. Recortar el backlog para que quepa en la retención habría encogido la ventana de la que depende el escenario 6, que es justamente lo que había que proteger.
+
+**El guardia que quedó:** el script **relee la cuota del broker** al final y falla si no está. No basta con que el comando no haya protestado —durante dos corridas la política no existía y el broker aplicaba su valor por defecto en silencio—, y una cuota por defecto podría ser precisamente la que bloquea al productor.
+
+### Lo que queda creado
+
+Tenant `hogar-alpes`, tres namespaces con sus seis políticas, siete tópicos de 4 particiones y **nueve suscripciones pre-creadas sin ningún consumidor todavía**. Eso último es lo que permite afirmar el escenario 6: en Pulsar, un mensaje publicado en un tópico sin suscripciones no se retiene para nadie, así que si Operaciones nunca hubiera arrancado, sus eventos no existirían cuando por fin lo hiciera.
+
+`conosur` no se crea aquí a propósito: se agrega en caliente durante el escenario 8, para medir que las regiones activas no se interrumpen (CA-8.4).
