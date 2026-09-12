@@ -145,7 +145,7 @@ Cada equipo dueño del stream fija sus políticas. La región va en el nombre de
 |---|---|---|
 | TTL de mensajes | **7 días** | Es la «ventana de retención» del escenario 6 (spec §5.2) |
 | Cuota de backlog | 10 GB · política **`consumer_backlog_eviction`** | Nunca bloquea al productor. Es la configuración que hace posible la respuesta del escenario 6 |
-| Retención de confirmados | 1 día / 1 GB | Permite re-leer para depurar; no es la ventana del escenario |
+| Retención de confirmados | 1 día / **20 GB** | Permite re-leer para depurar; no es la ventana del escenario. **Tiene que ser estrictamente mayor que la cuota de backlog**, o Pulsar rechaza la cuota con HTTP 412 (INF-3 en `docs/decisiones.md`) |
 | Compatibilidad de esquema | **`FULL_TRANSITIVE`** | §2.3 |
 | Validación de esquema | Obligatoria | Sin productores sin esquema |
 | Creación automática de tópicos | **Deshabilitada** | Un nombre mal escrito crearía un tópico sin particiones y sin suscripciones. Solo el script crea tópicos |

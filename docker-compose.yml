@@ -136,6 +136,21 @@ services:
       advertisedAddress: broker-2
       advertisedListeners: internal:pulsar://broker-2:6650,external:pulsar://localhost:6651
 
+  # Una sola ejecución: crea tenant, namespaces, políticas, tópicos
+  # particionados y las suscripciones por adelantado. Idempotente.
+  pulsar-config:
+    image: apachepulsar/pulsar:3.2.2
+    container_name: hda-pulsar-config
+    networks: [red-broker]
+    depends_on:
+      broker-1:
+        condition: service_healthy
+    volumes:
+      - ./infra/pulsar:/infra:ro
+    environment:
+      PULSAR_ADMIN_URL: http://broker-1:8080
+    command: bash /infra/inicializar.sh
+
   # --------------------------------------------------------------- Servicios
   postgres:
     image: postgres:16-alpine
