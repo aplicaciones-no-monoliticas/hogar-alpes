@@ -97,7 +97,9 @@ Pulsar asocia **un esquema por tópico**, así que cada stream lleva un solo tip
 | `evt-acreditacion` | `AcreditacionActualizada` (carga de estado) | Snapshot completo + `version` |
 | `evt-emparejamiento` | `EventoEmparejamiento` | `trabajo_id`, `total_candidatos`, `candidatos[]` |
 
-**Sobre común** en todos (RS-2): `id`, `type`, `specversion`, `time`, `service_name`, `datacontenttype` + **`correlation_id`**, que es nuevo.
+**Sobre común** en todos (RS-2): `id`, `time`, `ingestion`, `specversion`, `type`, `datacontenttype`, `service_name` + **`correlation_id`**, que es nuevo.
+
+**No se hereda: se repite en cada contrato.** El metaclase de `pulsar.schema` solo toma los campos declarados en la propia clase, así que una clase base con el sobre produce esquemas **sin sobre**, en silencio. Así venían publicándose los eventos de Gestión de Trabajos. `herramientas/verificar_contratos.py` comprueba que los cinco contratos lleven los ocho campos (CON-1 en `docs/decisiones.md`).
 
 **Propiedades de mensaje** (no requieren deserializar): `partner_id` (P-1), `region`, `correlation_id`.
 

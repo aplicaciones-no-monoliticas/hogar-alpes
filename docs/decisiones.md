@@ -116,3 +116,51 @@ El despachador además acepta **clave de partición** y **propiedades** (`partne
 | El consumidor reintenta en vez de morir | 4 reintentos en 12 s contra un broker inexistente |
 
 `operation_timeout_seconds` quedó configurable (`BROKER_TIMEOUT`), porque con los 15 s por defecto la prueba del reintento no alcanzaba a observar el primer fallo.
+
+---
+
+## CON-1 · La herencia de `Record` pierde los campos del padre
+
+**Fecha:** 2026-09-11 · **Dónde:** `contratos/v1/` · **Verificable con:** `python herramientas/verificar_contratos.py`
+
+### El hallazgo
+
+El metaclase de `pulsar.schema` arma los campos mirando **solo el diccionario propio** de la clase (`pulsar/schema/definition.py:47-65`). Los campos heredados **no entran al esquema**, y no hay error ni advertencia:
+
+```
+campos de Mensaje             : [id, time, ingestion, specversion, type, datacontenttype, service_name, correlation_id]
+campos de ComandoIntegracion  : []          <-- solo hereda: se queda sin ningún campo
+campos de ComandoCrearTrabajo : [trabajo_id, canal, partner_id, ...]   <-- sin sobre
+```
+
+### Lo que esto significa para el código que ya está en `main`
+
+`EventoTrabajoCreado`, en Gestión de Trabajos, publica **un solo campo: `data`**. El sobre CloudEvents —`id`, `type`, `time`, `service_name`— **nunca ha viajado** en sus eventos de integración, pese a que la especificación lo daba por existente (`RS-2`) y el README lo describe.
+
+No rompía nada porque todavía nadie consume esos eventos entre servicios. Se corrige en **GT-3**, cuando Gestión de Trabajos pase al stream unificado `evt-trabajo-{región}` con el contrato plano.
+
+### Cómo apareció, y la lección que vale para la sustentación
+
+La primera versión del verificador **daba PASA sin probar nada**. Comparaba `leido.correlation_id == instancia.correlation_id`: como ese campo no se deserializaba, ambos lados devolvían el mismo descriptor de clase, y la comparación era cierta de forma vacía. El defecto se vio porque al imprimir el valor salió `<pulsar.schema.definition.String object>` en lugar de un texto.
+
+Una verificación que compara un objeto contra sí mismo siempre pasa. **Las aserciones van contra literales**, no contra los atributos del objeto que se acaba de publicar.
+
+### La decisión
+
+Cada contrato **repite los ocho campos del sobre de forma explícita**. Es duplicación deliberada, del mismo tipo que el seedwork copiado (`TO-7`): se prefiere repetición visible a una herencia que falla en silencio. Para que las copias no se desvíen, `herramientas/verificar_contratos.py` comprueba en los cinco contratos:
+
+1. que todos los campos lleven `"default"` (regla de INF-0),
+2. que el sobre esté completo, los ocho campos,
+3. que el mensaje vuelva **con sus valores**, comparados contra literales.
+
+Se descartó la alternativa de anidar el sobre como sub-record (`sobre = Mensaje()`), que sí funciona: deja los campos un nivel abajo y reintroduce la pregunta de cómo evoluciona un record anidado, justo lo que INF-0 nos costó resolver.
+
+### Verificación ejecutada
+
+| Contrato | Campos con default | Sobre | Ida y vuelta |
+|---|---|---|---|
+| `cmd-trabajo` | 18 / 18 | completo | 5 campos intactos |
+| `evt-trabajo` | 17 / 17 | completo | 4 campos intactos |
+| `cmd-acreditacion` | 17 / 17 | completo | 4 campos intactos |
+| `evt-acreditacion` | 17 / 17 | completo | 4 campos intactos |
+| `evt-emparejamiento` | 15 / 15 | completo | 4 campos intactos |
