@@ -188,3 +188,35 @@ La política de backlog es la que sostiene la respuesta del escenario 6: al desa
 Tenant `hogar-alpes`, tres namespaces con sus seis políticas, siete tópicos de 4 particiones y **nueve suscripciones pre-creadas sin ningún consumidor todavía**. Eso último es lo que permite afirmar el escenario 6: en Pulsar, un mensaje publicado en un tópico sin suscripciones no se retiene para nadie, así que si Operaciones nunca hubiera arrancado, sus eventos no existirían cuando por fin lo hiciera.
 
 `conosur` no se crea aquí a propósito: se agrega en caliente durante el escenario 8, para medir que las regiones activas no se interrumpen (CA-8.4).
+
+---
+
+## INF-4 · Una región se define una sola vez
+
+**Fecha:** 2026-09-11 · **Dónde:** `infra/pulsar/comun.sh`, `agregar-region.sh`
+
+### La decisión
+
+`crear_region` vive en `comun.sh` y la usan **los dos** scripts: la inicialización y el alta en caliente. Si el alta creara tópicos o suscripciones distintas de las que crea la inicialización, la región nueva quedaría sutilmente rota y **el escenario 8 estaría midiendo otra cosa**: la comparación entre regiones dejaría de ser válida justo en la medición que la sostiene.
+
+Una región es, por definición única: dos tópicos particionados (`cmd-trabajo-<r>`, `evt-trabajo-<r>`) y tres suscripciones (`gestion-trabajos`, `operaciones`, `emparejamiento-<r>`).
+
+### Qué significa «en caliente»
+
+Agregar una región **no toca ningún tópico existente ni reinicia ningún servicio**. Operaciones la descubre sola, porque se suscribe por patrón (`evt-trabajo-.*`); Emparejamiento necesita levantar la réplica de esa región, que es una unidad de despliegue **nueva**, no un cambio en las que ya corren. Eso es lo que hace medible *«cero interrupciones en regiones activas»*.
+
+### Verificación ejecutada
+
+| Comprobación | Resultado |
+|---|---|
+| `inicializar.sh` después del refactor | `PASA` — el cambio no rompió la topología |
+| Alta de `conosur` | 2 tópicos de 4 particiones y 3 suscripciones, **releídas del broker** |
+| Segunda alta de `conosur` | Todo `existe` · `PASA` — idempotente |
+| `andina` y `norteamerica` | Intactas: mismos tópicos y mismas suscripciones |
+| Guardias: sin argumento · nombre inválido · alta válida | Salidas `2`, `2`, `0` |
+
+### Otra verificación que casi pasa por buena
+
+La primera comprobación de los códigos de salida imprimió `exit 0` para el caso sin argumento, y era falso: `$?` estaba capturando el `grep` de la tubería, no el script. Es el mismo error que en CON-1, donde una aserción comparaba un objeto contra sí mismo.
+
+Vale la pena nombrarlo como patrón: **una verificación mal escrita no falla, pasa** — y una verificación que pasa por la razón equivocada es peor que no tenerla, porque genera confianza. Por eso los scripts de esta entrega releen del broker lo que crearon en lugar de confiar en que nadie protestó.

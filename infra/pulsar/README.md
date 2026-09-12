@@ -5,13 +5,21 @@ Todo lo que existe en el broker se crea desde aquí, con scripts versionados e i
 | Archivo | Qué hace |
 |---|---|
 | `topologia.env` | Fuente única: tenant, namespaces, regiones, particiones y políticas |
+| `comun.sh` | Funciones compartidas y **la única definición de qué lleva una región** |
 | `inicializar.sh` | Crea la topología completa. Se puede correr las veces que haga falta |
 | `agregar-region.sh` | Agrega una región en caliente (INF-4, escenario 8) |
 
 ```bash
-docker compose run --rm pulsar-config                       # dentro de Docker
-PULSAR_ADMIN_URL=http://localhost:8080 bash inicializar.sh  # desde el host
+docker compose run --rm pulsar-config                        # topología completa
+docker compose run --rm pulsar-config \
+    bash /infra/agregar-region.sh conosur                     # región en caliente
+
+PULSAR_ADMIN_URL=http://localhost:8080 bash inicializar.sh    # o desde el host
 ```
+
+**Por qué `comun.sh`:** la forma de una región se define **una sola vez**, en `crear_region`. Si el alta en caliente creara tópicos o suscripciones distintas de las que crea la inicialización, la región nueva quedaría sutilmente rota y el escenario 8 estaría midiendo otra cosa.
+
+Los dos scripts **verifican contra el broker** lo que crearon, en vez de confiar en que ningún comando protestó. Es la lección de INF-3: durante dos corridas una política no existía y mandaba el valor por defecto, sin que nada lo delatara.
 
 ## Qué queda creado
 

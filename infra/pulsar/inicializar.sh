@@ -19,29 +19,11 @@
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=topologia.env
-source "$DIR/topologia.env"
-
-ADMIN_URL="${PULSAR_ADMIN_URL:-http://broker-1:8080}"
-ADMIN="${PULSAR_BIN:-/pulsar/bin}/pulsar-admin --admin-url $ADMIN_URL"
-
-fallos=0
-
-# Ejecuta una orden de administración tolerando que el objeto ya exista.
-# Cualquier otro error se reporta y hace fallar el script.
-aplicar() {
-  local descripcion="$1"; shift
-  local salida
-  if salida=$("$@" 2>&1); then
-    echo "  ok      $descripcion"
-  elif grep -qiE "already exists|Conflict|409" <<<"$salida"; then
-    echo "  existe  $descripcion"
-  else
-    echo "  FALLA   $descripcion"
-    echo "          ${salida//$'\n'/$'\n'          }" | head -6
-    fallos=$((fallos + 1))
-  fi
-}
+# `comun.sh` trae la topología, el cliente de administración y —lo importante—
+# `crear_region`, que es la ÚNICA definición de qué tópicos y suscripciones
+# lleva una región. Así el alta en caliente no puede desviarse de esto.
+# shellcheck source=comun.sh
+source "$DIR/comun.sh"
 
 crear_namespace() {
   local ns="$TENANT/$1"
@@ -89,13 +71,9 @@ crear_namespace "$NS_EMPAREJAMIENTO"
 for region in $REGIONES_INICIALES; do
   echo
   echo "región $region"
-  cmd="persistent://$TENANT/$NS_TRABAJOS/cmd-trabajo-$region"
-  evt="persistent://$TENANT/$NS_TRABAJOS/evt-trabajo-$region"
-  crear_topico "$cmd"
-  crear_topico "$evt"
-  crear_suscripcion "$cmd" "gestion-trabajos"
-  crear_suscripcion "$evt" "operaciones"
-  crear_suscripcion "$evt" "emparejamiento-$region"
+  # Misma definición que usa `agregar-region.sh`: una región creada en caliente
+  # es indistinguible de una creada aquí.
+  crear_region "$region"
 done
 
 echo
@@ -128,10 +106,4 @@ for ns in "$NS_TRABAJOS" "$NS_ACREDITACION" "$NS_EMPAREJAMIENTO"; do
   fi
 done
 
-echo
-echo "=============================================================="
-if [ "$fallos" -gt 0 ]; then
-  echo "FALLA · $fallos operaciones no se pudieron aplicar"
-  exit 1
-fi
-echo "PASA · topología creada"
+resumen "topología creada"
