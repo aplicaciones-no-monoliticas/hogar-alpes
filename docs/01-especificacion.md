@@ -342,7 +342,7 @@ Los **eventos de dominio** siguen existiendo dentro de cada servicio, en proceso
 | # | Requisito |
 |---|---|
 | RS-1 | Todo mensaje entre servicios tiene esquema declarado y registrado; productor y consumidor lo validan al conectarse |
-| RS-2 | Sobre común tipo CloudEvents (ya existe: `id`, `type`, `specversion`, `time`, `service_name`) + identificador de correlación, que mitiga `TO-4` |
+| RS-2 | Sobre común tipo CloudEvents (`id`, `type`, `specversion`, `time`, `ingestion`, `datacontenttype`, `service_name`) + `correlation_id`, que mitiga `TO-4`. **Corrección (CON-1):** el sobre existía en el código pero **no viajaba** — la herencia de `Record` descarta los campos del padre, así que los eventos de Gestión de Trabajos se publicaban sin él. Cada contrato lo repite de forma explícita y hay una verificación que lo comprueba |
 | RS-3 | Los cambios compatibles (agregar un campo opcional con valor por defecto) ocurren en el mismo stream, bajo una **regla de compatibilidad explícita** en el broker, no la que venga por defecto |
 | RS-4 | Un cambio incompatible crea un **stream nuevo** (`-v2`), con publicación dual durante la migración: *Event Stream Versioning* |
 | RS-5 | Los valores de dominio abiertos (estados, categorías) viajan como texto. Una enumeración cerrada en el esquema rompería MOD-3 |
