@@ -79,3 +79,40 @@ La segunda es un defecto real que no estaba en la lista de brechas: hoy, cualqui
 La creación automática de tópicos se habilita **solo** en `public/default`, para que los experimentos —el spike, y mañana las pruebas sueltas— no tengan que pedir sus tópicos por adelantado. Los namespaces de la solución (`hogar-alpes/*`, que crea INF-3) la mantienen **deshabilitada**: ahí un nombre mal escrito debe fallar, no crear un tópico fantasma sin particiones ni suscripciones.
 
 Con esa configuración, el spike se volvió a correr **contra el clúster** (no contra el standalone) y dio los cinco mismos resultados: el hallazgo de `required_default` no era un artefacto del entorno de desarrollo.
+
+---
+
+## INF-6 · La plantilla de servicio es una carpeta que se copia
+
+**Fecha:** 2026-09-11 · **Dónde:** `servicios/_plantilla/`
+
+### Carpeta copiable, no generador
+
+Se evaluó un script generador y se descartó: **esconder el copiado sería esconder justo lo que hay que defender.** La decisión `TO-7` de la Entrega 2 es que el seedwork se duplica por servicio para no reintroducir acoplamiento en tiempo de compilación (`PS-8`), y un repositorio donde se ve `cp -r servicios/_plantilla servicios/<nombre>` cuenta esa decisión sin necesidad de explicarla.
+
+### El seedwork ya no sabe cómo se llama su paquete
+
+La versión de Gestión de Trabajos tenía la ruta absoluta escrita adentro (`from gestion_trabajos.config.uow import ...`), así que cada copia obligaba a editar el código base. En la plantilla esos imports son relativos (`from ...config.uow import ...`): **renombrar la carpeta basta**. Bajó el costo de la copia sin tocar la decisión.
+
+También se corrigió una fuga: el seedwork común declaraba `TipoObjetoNoExisteEnDominioTrabajosExcepcion` —el nombre de un dominio ajeno en el código compartido— y las fábricas de `operaciones` ya la estaban importando. En la plantilla es `TipoObjetoNoExisteEnDominioExcepcion`.
+
+### Los servicios nuevos nacen sin los dos defectos que ya encontramos
+
+| Defecto | Cómo nace la plantilla |
+|---|---|
+| `G-3a`: un cliente de Pulsar por mensaje | Un cliente y un productor por proceso, en `config/broker.py` |
+| El consumidor muere ante un fallo transitorio (INF-2) | `consumidor.py` reintenta la suscripción; el fallo del handler hace `negative_acknowledge`, no se pierde el mensaje |
+
+Como efecto de `TO-7`, esos dos arreglos hay que hacerlos **otra vez** en Gestión de Trabajos (`GT-1`, `GT-2`): es exactamente el costo que la decisión dice que se paga, y conviene nombrarlo así en la sustentación.
+
+El despachador además acepta **clave de partición** y **propiedades** (`partner_id`, `region`, correlación), que son lo que sostienen el orden por `trabajoId` del escenario 8 y la trazabilidad de `TO-4`.
+
+### Verificación ejecutada
+
+| Comprobación | Resultado |
+|---|---|
+| Arranca en modo API y responde `/health` | 200 · `{"status":"up","modo":"api"}` |
+| El procedimiento de copiado del README, tal como está escrito | 0 menciones residuales a la plantilla; el servicio renombrado responde con su propio nombre |
+| El consumidor reintenta en vez de morir | 4 reintentos en 12 s contra un broker inexistente |
+
+`operation_timeout_seconds` quedó configurable (`BROKER_TIMEOUT`), porque con los 15 s por defecto la prueba del reintento no alcanzaba a observar el primer fallo.
