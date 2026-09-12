@@ -30,9 +30,9 @@ INF-2 (clúster)    ──►  INF-3 (políticas y tópicos)    ──►  todo 
 
 | # | Quién | Qué |
 |---|---|---|
-| 1 | A | INF-0 ✅, INF-1, INF-2 |
-| 2 | A | CON-1, INF-3, INF-6 |
-| 3 | S y J | Con INF-6 listo: OPS-1, ACR-1, EMP-1 en paralelo |
+| 1 | A | INF-0 ✅, INF-1 ✅, INF-2 ✅ |
+| 2 | A | INF-6 ✅ · siguen CON-1 e INF-3 |
+| 3 | S y J | **Desbloqueados**: OPS-1, ACR-1 y EMP-1 pueden arrancar ya, copiando `servicios/_plantilla` |
 
 ---
 
@@ -41,13 +41,13 @@ INF-2 (clúster)    ──►  INF-3 (políticas y tópicos)    ──►  todo 
 | ID | Tarea | Criterio | Depende de | Verificación | Est. |
 |---|---|---|---|---|---|
 | **INF-0** ⚙️ ✅ | **Spike de esquemas** (plan §2.5): ¿el consumidor decodifica con el esquema del escritor? ¿orden de campos? ¿auto-registro con `FULL_TRANSITIVE`? | RS-3 · habilita CA-E1, CA-E2 *(esquemas, 5 pt)* | — | ✅ Hecho: `docs/decisiones.md` · `herramientas/spike_esquemas.py` | 45 min |
-| **INF-1** 🔧 | Estructura del repositorio: crear `servicios/`, `git mv` de Gestión de Trabajos, ajustar Dockerfile, `pytest.ini` y rutas | **Habilitador** → sin esto no hay 4 servicios separados · conserva CA-M4 | — | `pytest` verde · `docker compose up` levanta GT como antes · colección actual en verde | 1 h |
-| **INF-2** ⚙️ | Clúster de Pulsar en Compose: ZooKeeper, inicialización de metadatos, **2 bookies**, **2 brokers**, healthchecks | RNF-2 *(clúster de Pulsar, 5 pt)* | — | `pulsar-admin clusters list` · `bookies list-bookies` muestra 2 · `brokers list` muestra 2 | 2 h |
+| **INF-1** 🔧 ✅ | Estructura del repositorio: crear `servicios/`, `git mv` de Gestión de Trabajos, ajustar Dockerfile, `pytest.ini` y rutas | **Habilitador** → sin esto no hay 4 servicios separados · conserva CA-M4 | — | `pytest` verde · `docker compose up` levanta GT como antes · colección actual en verde | 1 h |
+| **INF-2** ⚙️ ✅ | Clúster de Pulsar en Compose: ZooKeeper, inicialización de metadatos, **2 bookies**, **2 brokers**, healthchecks | RNF-2 *(clúster de Pulsar, 5 pt)* | — | `pulsar-admin clusters list` · `bookies list-bookies` muestra 2 · `brokers list` muestra 2 | 2 h |
 | **INF-3** ⚙️ | `inicializar.sh` idempotente: tenant, 3 namespaces, políticas (TTL 7d, cuota con desalojo, `FULL_TRANSITIVE`, validación obligatoria, creación automática deshabilitada), tópicos de `andina` y `norteamerica` con 4 particiones, **suscripciones pre-creadas en *earliest*** | RNF-2 · RS-3 · G-4 · habilita CA-6.3 y CA-8.5 *(5 pt + 30 pt)* | INF-2 | Correrlo dos veces no falla · `namespaces policies` muestra cada política · las suscripciones existen sin consumidor | 2 h |
 | **INF-4** ⚙️ | `agregar-region.sh <región>`: tópicos y suscripciones de una región nueva | CA-8.4 *(30 pt)* | INF-3 | Crea `conosur` y `topics stats` la muestra con su suscripción | 30 min |
 | **INF-5** ⚙️ | 4 PostgreSQL, **redes Docker separadas**, `.env.example` | CA-T1 · RNF-1 *(topología 5 pt + comunicación 20 pt)* | INF-1 | Desde un servicio, `getent hosts` de otro **no resuelve** | 1 h |
 | **CON-1** ⚙️ | **Contratos Avro de los 5 streams** con la regla de INF-0: todo campo `Tipo(default=None, required_default=True)` | RS-1 · RS-2 · RS-4 · RS-5 · RS-6 *(esquemas, 5 pt)* | INF-0 | Un script publica y consume un mensaje de cada stream · el registro muestra el esquema por tópico | 1,5 h |
-| **INF-6** ⚙️ | **Plantilla de servicio**: seedwork recortado, `config/` (base de datos, broker con **productor reutilizado**), doble punto de entrada `api` \| `consumidor`, Dockerfile, requirements | **Habilitador** → base de OPS, EMP y ACR · sostiene RNF-5 y RNF-7 | INF-1 | Un servicio de ejemplo arranca en los dos modos y responde `/health` | 2 h |
+| **INF-6** ⚙️ ✅ | **Plantilla de servicio**: seedwork recortado, `config/` (base de datos, broker con **productor reutilizado**), doble punto de entrada `api` \| `consumidor`, Dockerfile, requirements | **Habilitador** → base de OPS, EMP y ACR · sostiene RNF-5 y RNF-7 | INF-1 | Un servicio de ejemplo arranca en los dos modos y responde `/health` | 2 h |
 
 ---
 
