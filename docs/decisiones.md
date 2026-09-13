@@ -262,3 +262,39 @@ La lección concreta: **verificar el camino que el escenario recorre**, no el qu
 | Colección de Postman | **18 peticiones, 36 aserciones, 0 fallos, 25,5 s** |
 
 Los nombres de tópico siguen siendo los actuales: unificarlos en `evt-trabajo-{región}` es **GT-3**.
+
+---
+
+## ACR-1…5 · EMP-1…5 · Dos defectos que solo aparecieron con el clúster real corriendo
+
+**Fecha:** 2026-09-13 · **Ejecutado por:** Juan Manuel Domínguez · **Dónde:** `servicios/acreditacion/`, `servicios/emparejamiento/` · **Cómo se encontraron:** levantando el clúster de Pulsar + Postgres de verdad (`docker compose up`, más un overlay temporal con `acreditacion` y `emparejamiento`, no commiteado) y probando los flujos HTTP y por tópico de punta a punta. Ninguno de los dos aparece en `pytest` porque los dos necesitan un broker real o dos procesos compitiendo — exactamente lo que las pruebas unitarias, a propósito, no usan.
+
+### 1 · `config/broker.py` se autobloqueaba en el primer evento publicado
+
+La plantilla (`INF-6`) protege `_cliente` y `_productores` con un solo candado (`threading.Lock`). `productor()` toma el candado y, **sin soltarlo**, llama a `cliente()` — que vuelve a tomar el mismo candado. Con un `Lock` no reentrante eso es un auto-interbloqueo del propio hilo: el primer request que publica un evento (el primero en necesitar crear el productor) se queda esperando un candado que él mismo ya tiene tomado, hasta que gunicorn lo mata por `WORKER TIMEOUT`.
+
+No se veía en las pruebas de este servicio porque `tests/conftest.py` reemplaza `Despachador.publicar_evento` por un no-op (a propósito: la suite no depende de un broker). Tampoco se veía en el proceso `consumidor`, porque ahí `cliente()` se llama primero, sola, para suscribirse — y para cuando `productor()` la necesita, el candado ya está libre. Apareció exactamente donde tenía que aparecer: en el primer `POST /acreditaciones` contra el clúster real.
+
+**Corrección**, en la copia de `config/broker.py` de los dos servicios nuevos: `threading.Lock()` → `threading.RLock()`. Un `RLock` es reentrante por hilo: el mismo hilo puede tomarlo dos veces sin bloquearse. `servicios/_plantilla` y `servicios/gestion_trabajos` (que todavía no ha migrado a este despachador, `GT-2`) tienen el mismo defecto latente y deberían corregirse igual cuando les toque.
+
+### 2 · `vigencia_meses` no viajaba en el evento — Acreditación "olvidaba" cuánto duraba
+
+`Acreditacion.aprobar()` calcula `vigente_hasta` a partir de `self.vigencia_meses`. El campo se fija en `solicitar()`, pero **el evento `AcreditacionSolicitada` no lo llevaba**: no estaba en la lista de campos del snapshot. Un comando `AprobarAcreditacion` real siempre corre sobre un agregado **reconstruido** (`repositorio.obtener_por_id`), y la reconstrucción reproduce el estado únicamente a partir de lo que cada evento trae. Resultado: `vigencia_meses` volvía a su valor por defecto (`0`) después de cualquier recarga, y toda aprobación fijaba `vigente_hasta = hoy`, sin importar los meses solicitados.
+
+La primera versión de `test_agregar_y_reconstruir_coincide_con_el_estado_original` no lo agarró por la misma trampa que ya documentó `CON-1`: comparaba `reconstruida.vigente_hasta` contra `acreditacion.vigente_hasta`, y **las dos variables apuntaban al mismo objeto ya reconstruido** — la comparación era cierta de forma vacía. Se vio al probar contra HTTP real: `vigente_hasta` salía igual a la fecha de hoy sin importar `vigencia_meses`.
+
+**Corrección:** `vigencia_meses` se agregó a `EventoAcreditacion` (el snapshot común a los tres eventos) y a `CAMPOS_EVENTO` del mapeador de persistencia, así que ahora viaja y se reconstruye igual que el resto del estado. La prueba se corrigió para comparar contra un **literal** (`date.today() + timedelta(days=360)`), no contra el valor que se está verificando.
+
+### La lección que se repite
+
+Las dos veces que este patrón —una prueba que compara un valor contra sí mismo, o contra otro que depende del mismo cálculo— apareció en la entrega (`CON-1`, `INF-4`, y ahora esto), la prueba **pasó** sin probar nada. Las pruebas de dominio de este servicio (`test_dominio_acreditacion.py`, `test_dominio_emparejamiento.py`) sí comparan contra literales desde el principio; las de infraestructura que no lo hacían se corrigieron al encontrarlas.
+
+### Verificación ejecutada
+
+| Comprobación | Resultado |
+|---|---|
+| `pytest` en `acreditacion` y `emparejamiento` tras las dos correcciones | 19 y 16 pruebas, todas en verde |
+| `POST /acreditaciones` → `PUT /aprobar` → `GET` contra el clúster real | `vigente_hasta` = solicitud + 12 meses, no la fecha de hoy |
+| `SolicitarAcreditacion` ×2 y `AprobarAcreditacion` ×2 por `cmd-acreditacion` (mismo `acreditacion_id`) | Solo 2 eventos en el store (versiones 1 y 2), solo 2 snapshots publicados en `evt-acreditacion`: la reentrega no duplicó nada |
+| `TrabajoCreado` sintético en `evt-trabajo-andina` → `emparejamiento-andina` | Candidatos correctos desde la proyección, `CandidatosIdentificados` publicado en `evt-emparejamiento`; con una categoría sin proveedores acreditados, `SinCandidatos` |
+| `evt-acreditacion` → proyección de Emparejamiento | `GET /candidatos` reflejó el proveedor aprobado por Acreditación, sin ninguna llamada síncrona entre los dos servicios |
