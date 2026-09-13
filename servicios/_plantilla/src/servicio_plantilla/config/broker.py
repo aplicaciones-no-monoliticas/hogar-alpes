@@ -22,7 +22,11 @@ logger = logging.getLogger(__name__)
 
 _cliente: pulsar.Client | None = None
 _productores: dict = {}
-_candado = threading.Lock()
+# Reentrante a propósito: `productor()` toma el candado y llama a `cliente()`,
+# que vuelve a tomarlo. Con un Lock normal, la PRIMERA publicación se
+# autobloquea y la petición se cuelga para siempre, sin un solo mensaje de
+# error. Ver docs/decisiones.md · GT-2.
+_candado = threading.RLock()
 
 
 def url_broker() -> str:

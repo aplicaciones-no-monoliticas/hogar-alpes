@@ -1,61 +1,57 @@
 """ADAPTADOR de entrada asíncrono: consume comandos del tópico `cmd-trabajo`.
 
-Es la ruta que sustenta el escenario 7: el Gateway publica el comando y el
-servicio lo drena a su ritmo, sin que el productor espere.
+Es la ruta que sustenta el escenario 7 y la base del 8: el Gateway publica el
+comando y el servicio lo drena a su ritmo, sin que el productor espere.
+
+El bucle con reintento vive en el seedwork; aquí solo se declara **qué** se
+consume y **cómo se traduce** el mensaje a un comando de aplicación. Esa
+traducción es la capa anticorrupción: el contrato público entra, el modelo
+interno sale.
 """
 import logging
-import time
 
 import pulsar
-from pulsar.schema import AvroSchema
 
-from gestion_trabajos.config.broker import broker_host
+from gestion_trabajos.seedwork.infraestructura.consumidores import correr
 
 from .schema.v1.comandos import ComandoCrearTrabajo
 
 logger = logging.getLogger(__name__)
+
 TOPICO_COMANDOS_TRABAJO = 'cmd-trabajo'
+SUSCRIPCION = 'gestion-trabajos-sub-comandos'
+
+
+def _manejar_crear_trabajo(valor, mensaje):
+    """Traduce el comando de integración a un comando de aplicación."""
+    from gestion_trabajos.seedwork.aplicacion.comandos import ejecutar_comando
+
+    from ..aplicacion.comandos.crear_trabajo import CrearTrabajo
+
+    datos = valor.data
+    logger.info('Comando recibido: %s', datos)
+
+    ejecutar_comando(CrearTrabajo(
+        canal=datos.canal,
+        partner_id=datos.partner_id,
+        referencia_externa=datos.referencia_externa,
+        categoria=datos.categoria,
+        urgencia=datos.urgencia,
+        pais=datos.pais,
+        ciudad=datos.ciudad,
+        direccion=datos.direccion,
+        descripcion=datos.descripcion,
+    ))
 
 
 def suscribirse_a_comandos(app=None):
-    cliente = None
-    try:
-        cliente = pulsar.Client(f'pulsar://{broker_host()}:6650')
-        consumidor = cliente.subscribe(
-            TOPICO_COMANDOS_TRABAJO,
-            consumer_type=pulsar.ConsumerType.Shared,
-            subscription_name='gestion-trabajos-sub-comandos',
-            schema=AvroSchema(ComandoCrearTrabajo),
-        )
-
-        while True:
-            mensaje = consumidor.receive()
-            datos = mensaje.value().data
-            logger.info('Comando recibido: %s', datos)
-
-            from ..aplicacion.comandos.crear_trabajo import CrearTrabajo
-            from gestion_trabajos.seedwork.aplicacion.comandos import ejecutar_comando
-
-            comando = CrearTrabajo(
-                canal=datos.canal,
-                partner_id=datos.partner_id,
-                referencia_externa=datos.referencia_externa,
-                categoria=datos.categoria,
-                urgencia=datos.urgencia,
-                pais=datos.pais,
-                ciudad=datos.ciudad,
-                direccion=datos.direccion,
-                descripcion=datos.descripcion,
-            )
-            if app:
-                with app.app_context():
-                    ejecutar_comando(comando)
-            else:
-                ejecutar_comando(comando)
-
-            consumidor.acknowledge(mensaje)
-    except Exception:
-        logger.exception('Error suscribiéndose al tópico de comandos')
-    finally:
-        if cliente:
-            cliente.close()
+    # Shared: cada comando crea un trabajo distinto, así que no hay orden que
+    # preservar y el consumo escala sin techo.
+    correr(
+        topicos=TOPICO_COMANDOS_TRABAJO,
+        suscripcion=SUSCRIPCION,
+        schema=ComandoCrearTrabajo,
+        manejar=_manejar_crear_trabajo,
+        tipo=pulsar.ConsumerType.Shared,
+        app=app,
+    )

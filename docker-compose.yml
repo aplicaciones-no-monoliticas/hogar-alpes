@@ -168,19 +168,34 @@ services:
       timeout: 5s
       retries: 10
 
+  # Una imagen, dos procesos: la API y el consumidor escalan por separado.
   gestion-trabajos:
     build: ./servicios/gestion_trabajos
     # Se une a red-broker para alcanzar los brokers, y a la red por defecto para
     # su base de datos. INF-5 separa una red por servicio.
     networks: [red-broker, default]
-    environment:
+    environment: &gt-env
       DATABASE_URI: postgresql+psycopg2://hogaralpes:hogaralpes@postgres:5432/gestion_trabajos
       BROKER_HOST: broker-1
-      CONSUMIR_COMANDOS: "true"
-      FLASK_DEBUG: "1"
+      MODO: api
     ports:
       # 5000 lo ocupa AirPlay Receiver en macOS; el host usa 8000 por defecto.
       - "${PUERTO_HTTP:-8000}:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      broker-1:
+        condition: service_healthy
+
+  # Sin puertos publicados: por eso se puede escalar con
+  # `docker compose up -d --scale gestion-trabajos-consumidor=4` (escenario 8),
+  # y detenerlo sin tumbar la API (escenario 6).
+  gestion-trabajos-consumidor:
+    build: ./servicios/gestion_trabajos
+    networks: [red-broker, default]
+    environment:
+      <<: *gt-env
+      MODO: consumidor
     depends_on:
       postgres:
         condition: service_healthy

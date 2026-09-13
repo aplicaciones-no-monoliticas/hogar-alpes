@@ -2,33 +2,43 @@
 
 Genérico a propósito: recibe el mapeador del módulo que publica, así el seedwork
 no depende de ningún módulo de negocio.
+
+Tres diferencias con la versión anterior:
+
+1. **Reutiliza el productor** (brecha `G-3a`). Antes abría un cliente de Pulsar
+   por mensaje.
+2. **Acepta clave de partición y propiedades.** La clave es lo que garantiza el
+   orden dentro de un mismo `trabajoId` (escenario 8); las propiedades llevan
+   `partner_id`, `region` y el identificador de correlación sin obligar a
+   deserializar el mensaje (`TO-4`).
+3. Si el broker falla, registra el error y **no tumba la transacción de
+   negocio**: el commit ya ocurrió. La contrapartida es que ese evento se pierde
+   —riesgo `R-3`, cuya solución es el patrón *outbox* y está fuera del alcance
+   de esta entrega—.
 """
 import logging
 
-import pulsar
-from pulsar.schema import AvroSchema
-
-from gestion_trabajos.config.broker import broker_host
+from gestion_trabajos.config.broker import productor
 
 logger = logging.getLogger(__name__)
 
 
 class Despachador:
-    def _publicar_mensaje(self, mensaje, topico: str, schema):
-        cliente = None
+    def publicar_evento(self, evento, topico: str, mapeador, clave: str | None = None,
+                        propiedades: dict | None = None):
+        mensaje, schema = mapeador.entidad_a_dto(evento)
+        self._publicar_mensaje(mensaje, topico, schema, clave, propiedades)
+
+    def _publicar_mensaje(self, mensaje, topico: str, schema, clave: str | None = None,
+                          propiedades: dict | None = None):
         try:
-            cliente = pulsar.Client(f'pulsar://{broker_host()}:6650')
-            publicador = cliente.create_producer(topico, schema=AvroSchema(schema))
-            publicador.send(mensaje)
-            logger.info('Evento publicado en %s', topico)
+            productor(topico, schema).send(
+                mensaje,
+                partition_key=str(clave) if clave else None,
+                properties={k: str(v) for k, v in (propiedades or {}).items() if v is not None},
+            )
+            logger.info('Evento publicado en %s (clave=%s)', topico, clave)
         except Exception as e:
             # El servicio no puede caerse porque el broker no esté disponible:
-            # es el escenario 6 (la caída del reactor no degrada al productor).
+            # la caída del reactor no degrada al productor (escenario 6).
             logger.warning('No se pudo publicar en %s: %s', topico, e)
-        finally:
-            if cliente:
-                cliente.close()
-
-    def publicar_evento(self, evento, topico: str, mapeador):
-        mensaje, schema = mapeador.entidad_a_dto(evento)
-        self._publicar_mensaje(mensaje, topico, schema)

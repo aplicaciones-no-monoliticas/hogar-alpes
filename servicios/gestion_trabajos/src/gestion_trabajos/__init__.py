@@ -3,10 +3,12 @@
 Application factory. El orden de importación importa: los módulos de handlers se
 importan explícitamente para que sus `dispatcher.connect` queden registrados
 antes de atender el primer request.
+
+El consumidor **ya no arranca aquí**: corre como proceso propio
+(`python -m gestion_trabajos.consumidor`). Ver `consumidor.py`.
 """
 import logging
 import os
-import threading
 
 from flask import Flask, jsonify
 
@@ -31,15 +33,7 @@ def registrar_comandos_y_queries():
     import gestion_trabajos.modulos.operaciones.aplicacion.queries  # noqa: F401
 
 
-def comenzar_consumidor(app):
-    from gestion_trabajos.modulos.trabajos.infraestructura.consumidores import (
-        suscribirse_a_comandos,
-    )
-    hilo = threading.Thread(target=suscribirse_a_comandos, args=(app,), daemon=True)
-    hilo.start()
-
-
-def create_app(configuracion=None):
+def crear_app(configuracion=None):
     from gestion_trabajos.api import JsonEncoder
     from gestion_trabajos.config.db import db
 
@@ -79,9 +73,14 @@ def create_app(configuracion=None):
 
     @app.route('/health')
     def health():
-        return jsonify({'status': 'up', 'service': 'gestion-trabajos'})
-
-    if os.getenv('CONSUMIR_COMANDOS', 'false').lower() == 'true':
-        comenzar_consumidor(app)
+        return jsonify({
+            'status': 'up',
+            'service': 'gestion-trabajos',
+            'modo': os.getenv('MODO', 'api'),
+        })
 
     return app
+
+
+# `flask run` y las pruebas siguen encontrando el nombre de siempre.
+create_app = crear_app
