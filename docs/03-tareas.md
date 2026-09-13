@@ -80,11 +80,11 @@ INF-2 (clúster)    ──►  INF-3 (políticas y tópicos)    ──►  todo 
 
 | ID | Tarea | Criterio | Depende de | Verificación | Est. |
 |---|---|---|---|---|---|
-| **ACR-1** | Esqueleto y dominio: agregación `Acreditacion`, VOs, homologaciones, reglas de transición, eventos de dominio | **Habilitador** → base de ACR-2 · sostiene RNF-7 *(DDD)* | INF-6 | `pytest` del dominio verde sin infraestructura | 2 h |
-| **ACR-2** | **Event store**: `eventos_acreditacion`, append y **rehidratación por reproducción**, `UNIQUE(agregado_id, version)` | D-5 *(Event Sourcing, 25 pt)* | ACR-1 | Dos escrituras con la misma versión: la segunda falla · el estado reconstruido coincide | 2,5 h |
-| **ACR-3** | Comandos y publicación: `Solicitar`, `Aprobar`, `Revocar` · consumidor de `cmd-acreditacion` (Failover) · **snapshot publicado después del commit** | D-6 · RS-1 · habilita CA-8.1 *(20 pt + 25 pt)* | ACR-2, CON-1, INF-3 | Solicitud y aprobación → dos eventos en el store y dos snapshots en `evt-acreditacion`, en orden | 2,5 h |
-| **ACR-4** | Consultas: `GET /acreditaciones/{id}` (reconstruida) y `/eventos` (el historial) | *(Event Sourcing, 25 pt — es la evidencia del ítem)* | ACR-2 | El historial muestra la secuencia completa | 1 h |
-| **ACR-5** | Pruebas: reconstrucción, concurrencia optimista, comando repetido | Control de riesgo (ver §10) | ACR-3 | `pytest` verde | 1 h |
+| **ACR-1** ✅ | Esqueleto y dominio: agregación `Acreditacion`, VOs, homologaciones, reglas de transición, eventos de dominio | **Habilitador** → base de ACR-2 · sostiene RNF-7 *(DDD)* | INF-6 | `pytest` del dominio verde sin infraestructura | 2 h |
+| **ACR-2** ✅ | **Event store**: `eventos_acreditacion`, append y **rehidratación por reproducción**, `UNIQUE(agregado_id, version)` | D-5 *(Event Sourcing, 25 pt)* | ACR-1 | Dos escrituras con la misma versión: la segunda falla · el estado reconstruido coincide | 2,5 h |
+| **ACR-3** ✅ | Comandos y publicación: `Solicitar`, `Aprobar`, `Revocar` · consumidor de `cmd-acreditacion` (Failover) · **snapshot publicado después del commit** | D-6 · RS-1 · habilita CA-8.1 *(20 pt + 25 pt)* | ACR-2, CON-1, INF-3 | Solicitud y aprobación → dos eventos en el store y dos snapshots en `evt-acreditacion`, en orden | 2,5 h |
+| **ACR-4** ✅ | Consultas: `GET /acreditaciones/{id}` (reconstruida) y `/eventos` (el historial) | *(Event Sourcing, 25 pt — es la evidencia del ítem)* | ACR-2 | El historial muestra la secuencia completa | 1 h |
+| **ACR-5** ✅ | Pruebas: reconstrucción, concurrencia optimista, comando repetido | Control de riesgo (ver §10) | ACR-3 | `pytest` verde | 1 h |
 
 ---
 
@@ -92,11 +92,13 @@ INF-2 (clúster)    ──►  INF-3 (políticas y tópicos)    ──►  todo 
 
 | ID | Tarea | Criterio | Depende de | Verificación | Est. |
 |---|---|---|---|---|---|
-| **EMP-1** | Esqueleto y dominio: `Emparejamiento`, `CriterioBusqueda`, `Candidato`, regla *«solo acreditación vigente»*, **puerto** de la proyección | **Habilitador** → base de EMP-2 y EMP-3 · refuerza CA-M1 *(DDD)* | INF-6 | `pytest` del dominio verde | 1,5 h |
-| **EMP-2** | **Proyección**: consumidor de `evt-acreditacion`, upsert **por versión**, tabla con índice parcial | **CA-8.1** · **CA-8.6** *(30 pt + CRUD 25 pt)* | EMP-1, ACR-3 | Un evento viejo no pisa uno nuevo · reprocesarlo no cambia el resultado | 2,5 h |
-| **EMP-3** | **Consumidor regional** de `evt-trabajo-{r}` (Failover) → `EmparejarTrabajo` → persistir → publicar `CandidatosIdentificados` o `SinCandidatos` | **CA-8.3** · **CA-8.5** · RNF-1 *(30 pt + 20 pt)* | EMP-1, CON-1, GT-3 | Crear un trabajo en GT → emparejamiento persistido y evento publicado | 2,5 h |
-| **EMP-4** | Consultas: `GET /candidatos?categoria=&pais=&ciudad=` y `GET /emparejamientos/{trabajoId}` | **CA-8.2** *(30 pt)* | EMP-2 | El plan de consulta usa el índice (`EXPLAIN`) | 1 h |
-| **EMP-5** | Pruebas: regla de vigencia, idempotencia de la proyección | Control de riesgo (ver §10) | EMP-4 | `pytest` verde | 1 h |
+| **EMP-1** ✅ | Esqueleto y dominio: `Emparejamiento`, `CriterioBusqueda`, `Candidato`, regla *«solo acreditación vigente»*, **puerto** de la proyección | **Habilitador** → base de EMP-2 y EMP-3 · refuerza CA-M1 *(DDD)* | INF-6 | `pytest` del dominio verde | 1,5 h |
+| **EMP-2** ✅ | **Proyección**: consumidor de `evt-acreditacion`, upsert **por versión**, tabla con índice parcial | **CA-8.1** · **CA-8.6** *(30 pt + CRUD 25 pt)* | EMP-1, ACR-3 | Un evento viejo no pisa uno nuevo · reprocesarlo no cambia el resultado | 2,5 h |
+| **EMP-3** ✅ | **Consumidor regional** de `evt-trabajo-{r}` (Failover) → `EmparejarTrabajo` → persistir → publicar `CandidatosIdentificados` o `SinCandidatos` | **CA-8.3** · **CA-8.5** · RNF-1 *(30 pt + 20 pt)* | EMP-1, CON-1, GT-3 | Crear un trabajo en GT → emparejamiento persistido y evento publicado | 2,5 h |
+| **EMP-4** ✅ | Consultas: `GET /candidatos?categoria=&pais=&ciudad=` y `GET /emparejamientos/{trabajoId}` | **CA-8.2** *(30 pt)* | EMP-2 | El plan de consulta usa el índice (`EXPLAIN`) | 1 h |
+| **EMP-5** ✅ | Pruebas: regla de vigencia, idempotencia de la proyección | Control de riesgo (ver §10) | EMP-4 | `pytest` verde | 1 h |
+
+**Nota sobre la verificación de EMP-3.** `GT-3` (el stream unificado `evt-trabajo-{región}`) todavía no está hecho, así que la verificación real no pudo ser *«crear un trabajo en GT»*: se publicó un `EventoTrabajo` sintético, con el contrato de `CON-1`, directo en `evt-trabajo-andina` contra el clúster real, y se comprobó que EMP-3 persiste el emparejamiento y publica `CandidatosIdentificados`/`SinCandidatos` según haya o no candidatos acreditados. Ver `docs/decisiones.md`.
 
 ---
 
@@ -105,8 +107,8 @@ INF-2 (clúster)    ──►  INF-3 (políticas y tópicos)    ──►  todo 
 | ID | Tarea | Dueño | Criterio | Depende de | Verificación | Est. |
 |---|---|---|---|---|---|---|
 | **HER-1** ⚙️ | `generador_carga.py`: publica `CrearTrabajo` a una tasa y por un tiempo dados | S | **Habilitador** → sin él no hay escenario 6 ni 8 | CON-1 | 500 comandos publicados y consumidos | 1 h |
-| **HER-2** ⚙️ | `medir_latencia.py`: p50, p95, p99 y errores, solo con biblioteca estándar | J | **Habilitador** → instrumento de CA-6.2 y CA-8.2 | — | Corre contra `/health` | 45 min |
-| **HER-3** ⚙️ | `cargar_acreditaciones.py`: 100.000 solicitudes y aprobaciones | J | **Habilitador** → instrumento de CA-8.1 | ACR-3 | Prueba con 1.000 antes de la corrida grande | 1 h |
+| **HER-2** ⚙️ ✅ | `medir_latencia.py`: p50, p95, p99 y errores, solo con biblioteca estándar | J | **Habilitador** → instrumento de CA-6.2 y CA-8.2 | — | Corre contra `/health` | 45 min |
+| **HER-3** ⚙️ ✅ | `cargar_acreditaciones.py`: 100.000 solicitudes y aprobaciones | J | **Habilitador** → instrumento de CA-8.1 | ACR-3 | Prueba con 1.000 antes de la corrida grande | 1 h |
 | **ESC-6** ⚙️ | `escenario-6.sh`: línea base → detener el consumidor → carga → backlog → reanudar → conteos | S | **CA-6.1 … CA-6.6** *(30 pt)* | OPS-3, HER-1, INF-3 | Corrida con *T* = 3 min en verde | 2,5 h |
 | **ESC-8** ⚙️ | `escenario-8.sh`: proyección → latencia → drenaje con *k* = 1, 2, 4 → región en caliente | J | **CA-8.1 … CA-8.6** *(30 pt)* | EMP-4, HER-2, HER-3, INF-4 | Corrida reducida (10.000 proveedores) en verde | 3 h |
 | **ESC-M** ⚙️ | `mod-1.sh`, `mod-2.sh`, `mod-3.sh` | A | **CA-M1 · CA-M2 · CA-M3** *(30 pt)* | GT-6, GT-3, OPS-2 | Los tres en verde · el `StartedAt` de OPS y EMP no cambia | 2 h |
