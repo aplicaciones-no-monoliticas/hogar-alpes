@@ -220,3 +220,45 @@ Agregar una región **no toca ningún tópico existente ni reinicia ningún serv
 La primera comprobación de los códigos de salida imprimió `exit 0` para el caso sin argumento, y era falso: `$?` estaba capturando el `grep` de la tubería, no el script. Es el mismo error que en CON-1, donde una aserción comparaba un objeto contra sí mismo.
 
 Vale la pena nombrarlo como patrón: **una verificación mal escrita no falla, pasa** — y una verificación que pasa por la razón equivocada es peor que no tenerla, porque genera confianza. Por eso los scripts de esta entrega releen del broker lo que crearon en lugar de confiar en que nadie protestó.
+
+---
+
+## GT-1 y GT-2 · Un candado no reentrante colgaba la primera publicación
+
+**Fecha:** 2026-09-12 · **Dónde:** `servicios/gestion_trabajos`, `servicios/_plantilla`
+
+### El defecto
+
+`config/broker.py` reutiliza cliente y productor para no abrir una conexión por mensaje (brecha `G-3a`). La primera versión protegía ese estado con `threading.Lock`, y `productor()` tomaba el candado y llamaba a `cliente()`, **que volvía a tomar el mismo candado**. Un `Lock` de Python no es reentrante: la **primera** publicación se autobloqueaba.
+
+Lo que se veía desde afuera era desconcertante: el `POST` se quedaba colgado hasta que gunicorn abortaba el worker por tiempo y devolvía `500`, sin una sola línea de error en el log —porque el mensaje de log venía *después* del `send`— y sin que el tópico llegara a crearse. La colección de Postman tardó **33 minutos** y falló 20 de 31 aserciones.
+
+La corrección es `threading.RLock()`, en **las dos copias**: la plantilla y Gestión de Trabajos. Otra vez el costo de `TO-7`, y esta vez el arreglo era obligatorio en ambas.
+
+### Por qué la verificación de INF-6 no lo atrapó
+
+La plantilla se verificó arrancando la API, comprobando `/health` y probando el reintento del consumidor. Nada de eso **publica un evento**, así que el camino con el candado nunca se ejecutó. Es el tercer caso en esta entrega del mismo patrón: *una verificación que no ejercita el camino real pasa sin probar nada*.
+
+La lección concreta: **verificar el camino que el escenario recorre**, no el que es fácil de montar. El escenario 8 publica eventos; la verificación de la plantilla no publicaba ninguno.
+
+### Lo que quedó
+
+| Cambio | Por qué |
+|---|---|
+| API y consumidor son **procesos distintos** de la misma imagen | Escalar consumidores sin chocar con el puerto HTTP (escenario 8) y detener el reactor sin tumbar su API (escenario 6) |
+| El consumidor ya **no es un hilo** dentro de `create_app` | Con el recargador o con varios workers podía quedar duplicado, consumiendo el mismo comando dos veces |
+| Cliente y productor **por proceso** | `G-3a`: antes se abría un cliente por mensaje |
+| Cada evento viaja con **clave de partición** `trabajo_id` y **propiedades** `partner_id`, `region`, `correlation_id` | La clave preserva el orden por trabajo al particionar (escenario 8); las propiedades se leen sin deserializar y mitigan `TO-4` |
+
+### Verificación ejecutada
+
+| Comprobación | Resultado |
+|---|---|
+| Pruebas unitarias | 9 / 9 |
+| Los dos procesos arriba | API responde `modo: api`; el consumidor queda suscrito a `cmd-trabajo` |
+| El consumidor reintenta contra un broker inexistente | **18 reintentos** en 25 s, sin terminar el proceso |
+| Publicación | 10 `POST` → **10 respuestas 202 y 10 eventos en el tópico** |
+| Un productor **por proceso** | Con `WORKERS=1`: **1** productor · con 2 workers: **2** — no 10, que sería uno por mensaje |
+| Colección de Postman | **18 peticiones, 36 aserciones, 0 fallos, 25,5 s** |
+
+Los nombres de tópico siguen siendo los actuales: unificarlos en `evt-trabajo-{región}` es **GT-3**.
