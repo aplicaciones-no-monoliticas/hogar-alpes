@@ -1,37 +1,57 @@
 """Contrato PÚBLICO del servicio, versionado en `v1`.
 
-Los consumidores externos dependen de esto, no del modelo de dominio. Un cambio
-incompatible se publica como `v2` y `v1` sigue vivo: es lo que permite que un
-consumidor que aún no conoce un estado nuevo lo ignore sin romperse (tolerant
-reader, escenario 3).
+Copia de `contratos/v1/evt_trabajo.py` (CON-1). **Gestión de Trabajos es el
+único productor** de este stream; Operaciones y Emparejamiento tienen la misma
+copia del lado consumidor. La fuente de verdad es el registro de esquemas del
+broker, no este archivo: se copia por servicio para no reintroducir acoplamiento
+en tiempo de compilación (`TO-7`).
+
+**Un solo stream para los dos tipos de evento**, discriminados por `type`:
+
+    hogaralpes.trabajo.creado.v1
+    hogaralpes.trabajo.estado-cambiado.v1
+
+Es la corrección de la brecha `G-2`. Con un tópico por tipo de evento no había
+orden entre ellos: tras una caída, Operaciones podía recibir el cambio de estado
+antes que la creación del trabajo y lo descartaba en silencio. Con un stream
+único y `trabajo_id` como clave de partición, el orden dentro de un mismo
+trabajo está garantizado.
+
+Los ocho primeros campos son el sobre, repetidos a propósito: la herencia de
+`Record` pierde los campos del padre sin avisar, y así fue como la versión
+anterior de este contrato publicó eventos **sin sobre** (ver CON-1 en
+`docs/decisiones.md`).
+
+Tipo de evento: **integración (delta)**. Comunica hechos que disparan
+comportamiento —abrir un seguimiento, emparejar— y debe ser pequeño, porque el
+escenario 6 obliga a retener el backlog mientras el consumidor está caído.
+`estado_anterior` viene vacío en la creación.
 """
-from pulsar.schema import Record, String
+from pulsar.schema import Long, Record, String
 
-from gestion_trabajos.seedwork.infraestructura.schema.v1.mensajes import (
-    EventoIntegracion,
-)
-
-
-class TrabajoCreadoPayload(Record):
-    trabajo_id = String()
-    categoria = String()
-    urgencia = String()
-    pais = String()
-    ciudad = String()
-    canal = String()
-    partner_id = String()
-    estado = String()
+TIPO_CREADO = 'hogaralpes.trabajo.creado.v1'
+TIPO_ESTADO_CAMBIADO = 'hogaralpes.trabajo.estado-cambiado.v1'
 
 
-class EventoTrabajoCreado(EventoIntegracion):
-    data = TrabajoCreadoPayload()
-
-
-class EstadoTrabajoCambiadoPayload(Record):
-    trabajo_id = String()
-    estado_anterior = String()
-    estado_nuevo = String()
-
-
-class EventoEstadoTrabajoCambiado(EventoIntegracion):
-    data = EstadoTrabajoCambiadoPayload()
+class EventoTrabajo(Record):
+    # --- sobre ---
+    id = String(default=None, required_default=True)
+    time = Long(default=None, required_default=True)
+    ingestion = Long(default=None, required_default=True)
+    specversion = String(default=None, required_default=True)
+    type = String(default=None, required_default=True)
+    datacontenttype = String(default=None, required_default=True)
+    service_name = String(default=None, required_default=True)
+    correlation_id = String(default=None, required_default=True)
+    # --- carga ---
+    trabajo_id = String(default=None, required_default=True)
+    partner_id = String(default=None, required_default=True)
+    canal = String(default=None, required_default=True)
+    pais = String(default=None, required_default=True)
+    ciudad = String(default=None, required_default=True)
+    categoria = String(default=None, required_default=True)
+    urgencia = String(default=None, required_default=True)
+    # Texto, no enumeración Avro: una enumeración cerrada rompería MOD-3, que
+    # exige agregar un estado nuevo sin tocar a los consumidores.
+    estado = String(default=None, required_default=True)
+    estado_anterior = String(default=None, required_default=True)

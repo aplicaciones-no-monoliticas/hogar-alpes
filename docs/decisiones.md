@@ -382,6 +382,46 @@ Este entorno de desarrollo no tenía Python 3.11 ni acceso a Docker; se instaló
 | Regresión de los otros tres servicios con el mismo intérprete | `gestion_trabajos` 9/9 · `emparejamiento` 16/16 · `acreditacion` 19/19 — sin cambios de comportamiento |
 | `docker-compose.yml` con `postgres-operaciones` + `operaciones` + `operaciones-consumidor` | YAML válido, servicios y volumen nuevos verificados por `python3 -c "yaml.safe_load(...)"` |
 | `escenarios/escenario-6.sh` | `bash -n` (sintaxis) — **no** se corrió contra un clúster real: no hay Docker disponible en este entorno. Pendiente antes de la corrida formal |
+
+---
+
+## GT-3 · Los eventos cruzan entre servicios por primera vez
+
+**Fecha:** 2026-09-14 · **Dónde:** `servicios/gestion_trabajos/`
+
+Hasta aquí, los cuatro servicios corrían pero hablaban idiomas distintos en tópicos distintos: Gestión de Trabajos publicaba dos records con carga anidada en `public/default/evt-trabajo-creado` y `evt-trabajo-estado`, mientras Operaciones y Emparejamiento escuchaban el `EventoTrabajo` plano de CON-1 en `hogar-alpes/trabajos/evt-trabajo-{región}`.
+
+### Qué cambió
+
+| Antes | Ahora |
+|---|---|
+| Dos tópicos, uno por tipo de evento | **Un stream por región**, los dos tipos discriminados por `type` |
+| `public/default`, sin particionar | `hogar-alpes/trabajos`, 4 particiones, clave `trabajo_id` |
+| Dos records con `data` anidado, heredando un sobre que no viajaba | El `EventoTrabajo` **plano** de `contratos/v1`, con los ocho campos del sobre |
+| Suscripción `gestion-trabajos-sub-comandos` | `gestion-trabajos`, **la que la infraestructura pre-crea** |
+| País → región escrito en el handler | `config/topicos.py`, con `REGIONES_EXTRA` por variable de entorno |
+
+Lo de la suscripción no es cosmético: con el nombre viejo, la suscripción que `inicializar.sh` pre-crea quedaba huérfana, y los comandos publicados antes de que el servicio arrancara no se retenían para nadie — justo la garantía que el escenario 6 necesita.
+
+### El evento de dominio tuvo que aprender dónde ocurrió
+
+`EstadoTrabajoCambiado` solo llevaba `trabajo_id`, `estado_anterior` y `estado_nuevo`. Sin `pais` no había con qué enrutarlo, y si la creación y el cambio de estado caían en streams distintos **se perdía el orden dentro del trabajo**, que es exactamente lo que la brecha `G-2` describe. Ahora el evento lleva su contexto (`pais`, `ciudad`, `canal`, `partner_id`, `categoria`, `urgencia`), lo que además evita que el consumidor tenga que preguntarle nada a este servicio.
+
+### Verificación ejecutada
+
+| Comprobación | Resultado |
+|---|---|
+| `POST /trabajos` (CO) | `202` · publicado en `evt-trabajo-andina` |
+| Fan-out del stream | **1 mensaje entrando, 2 saliendo**: las dos suscripciones, cada una con su cursor |
+| Operaciones abre el seguimiento **por Pulsar** | `200` · prioridad `P1`, SLA 60 min derivados de la urgencia |
+| Cambio de estado por el **mismo** stream | El seguimiento pasa de `CREADO` a `EMPAREJANDO`: llegó después de la creación, en orden (`G-2`) |
+| Emparejamiento reacciona con su propia suscripción | `200` · `region: andina`, `total: 0` — correcto: la base arrancó en frío y no hay acreditaciones cargadas, así que la rama legítima es «sin candidatos» |
+| Tópicos viejos | 0: ya no existen |
+| Enrutamiento por país | CO→andina · MX→norteamerica · BR y AR→conosur · PE→por defecto |
+
+### Lo que esto desbloquea
+
+`escenario-6.sh` publicaba eventos sintéticos directo en `evt-trabajo-{región}` porque GT no llegaba hasta allí. **Ese atajo ya no hace falta**: el camino real —`POST /trabajos` → Pulsar → Operaciones— está probado de punta a punta, así que el escenario 6 puede medirse contra el sistema de verdad, que es lo que el tutor va a querer ver.
 | `herramientas/generador_carga.py` | Importa y corre en modo `--via-http` contra un puerto cerrado: reporta la falla de conexión correctamente (`FALLA`, código de salida 1) |
 | `postman/hogar-alpes.postman_collection.json` | JSON válido tras la reestructuración; **no** se corrió con `newman` (requiere el sistema completo arriba) |
 

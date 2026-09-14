@@ -17,12 +17,7 @@ from ..dominio.objetos_valor import (
     Urgencia,
 )
 from . import dto as modelo
-from .schema.v1.eventos import (
-    EstadoTrabajoCambiadoPayload,
-    EventoEstadoTrabajoCambiado,
-    EventoTrabajoCreado,
-    TrabajoCreadoPayload,
-)
+from .schema.v1.eventos import TIPO_CREADO, TIPO_ESTADO_CAMBIADO, EventoTrabajo
 
 
 class MapeadorTrabajo(Mapeador):
@@ -91,52 +86,52 @@ class MapeadorEventosTrabajo(Mapeador):
     LATEST_VERSION = versions[0]
 
     def obtener_tipo(self) -> type:
-        return EventoTrabajoCreado
+        return EventoTrabajo
 
-    def _envelope(self, evento, tipo: str) -> dict:
+    def _sobre(self, evento, tipo: str) -> dict:
+        """Los ocho campos del sobre, explícitos. La herencia de `Record` los
+        perdía en silencio: ver CON-1 en `docs/decisiones.md`."""
         return dict(
             id=str(evento.id),
             time=unix_time_millis(evento.fecha_evento),
-            specversion='v1',
-            type=tipo,
             ingestion=unix_time_millis(datetime.utcnow()),
-            datacontenttype='AVRO',
+            specversion='1.0',
+            type=tipo,
+            datacontenttype='application/avro',
             service_name='gestion-trabajos',
+            # El identificador del trabajo correlaciona todo su ciclo de vida a
+            # través de los servicios (TO-4).
+            correlation_id=str(evento.trabajo_id),
         )
 
     def entidad_a_dto(self, evento):
+        """Los dos tipos de evento viajan por el MISMO stream, discriminados por
+        `type`. Es lo que garantiza el orden dentro de un trabajo (brecha G-2)."""
         nombre = type(evento).__name__
 
-        if nombre == 'TrabajoCreado':
-            payload = TrabajoCreadoPayload(
-                trabajo_id=str(evento.trabajo_id),
-                categoria=evento.categoria,
-                urgencia=evento.urgencia,
-                pais=evento.pais,
-                ciudad=evento.ciudad,
-                canal=evento.canal,
-                partner_id=evento.partner_id,
-                estado=evento.estado,
-            )
-            return (
-                EventoTrabajoCreado(data=payload, **self._envelope(evento, 'TrabajoCreado')),
-                EventoTrabajoCreado,
-            )
+        tipos = {'TrabajoCreado': TIPO_CREADO, 'EstadoTrabajoCambiado': TIPO_ESTADO_CAMBIADO}
+        if nombre not in tipos:
+            raise NotImplementedError(f'No hay esquema de integración para {nombre}')
 
-        if nombre == 'EstadoTrabajoCambiado':
-            payload = EstadoTrabajoCambiadoPayload(
-                trabajo_id=str(evento.trabajo_id),
-                estado_anterior=evento.estado_anterior,
-                estado_nuevo=evento.estado_nuevo,
-            )
-            return (
-                EventoEstadoTrabajoCambiado(
-                    data=payload, **self._envelope(evento, 'EstadoTrabajoCambiado')
-                ),
-                EventoEstadoTrabajoCambiado,
-            )
+        def campo(nombre_campo: str) -> str:
+            return str(getattr(evento, nombre_campo, '') or '')
 
-        raise NotImplementedError(f'No hay esquema de integración para {nombre}')
+        return (
+            EventoTrabajo(
+                **self._sobre(evento, tipos[nombre]),
+                trabajo_id=str(evento.trabajo_id),
+                partner_id=campo('partner_id'),
+                canal=campo('canal'),
+                pais=campo('pais'),
+                ciudad=campo('ciudad'),
+                categoria=campo('categoria'),
+                urgencia=campo('urgencia'),
+                # En la creación es el estado inicial; en el cambio, el nuevo.
+                estado=campo('estado') or campo('estado_nuevo'),
+                estado_anterior=campo('estado_anterior'),
+            ),
+            EventoTrabajo,
+        )
 
     def dto_a_entidad(self, dto):
         raise NotImplementedError

@@ -12,14 +12,12 @@ import logging
 
 import pulsar
 
+from gestion_trabajos.config.topicos import SUSCRIPCION_COMANDOS, patron_cmd_trabajo
 from gestion_trabajos.seedwork.infraestructura.consumidores import correr
 
 from .schema.v1.comandos import ComandoCrearTrabajo
 
 logger = logging.getLogger(__name__)
-
-TOPICO_COMANDOS_TRABAJO = 'cmd-trabajo'
-SUSCRIPCION = 'gestion-trabajos-sub-comandos'
 
 
 def _manejar_crear_trabajo(valor, mensaje):
@@ -45,11 +43,16 @@ def _manejar_crear_trabajo(valor, mensaje):
 
 
 def suscribirse_a_comandos(app=None):
+    import re
+
+    # Por patrón, no por región: una réplica cubre las regiones existentes y las
+    # que se agreguen en caliente (CA-8.4) sin reconfigurar nada.
+    #
     # Shared: cada comando crea un trabajo distinto, así que no hay orden que
     # preservar y el consumo escala sin techo.
     correr(
-        topicos=TOPICO_COMANDOS_TRABAJO,
-        suscripcion=SUSCRIPCION,
+        topicos=re.compile(patron_cmd_trabajo()),
+        suscripcion=SUSCRIPCION_COMANDOS,
         schema=ComandoCrearTrabajo,
         manejar=_manejar_crear_trabajo,
         tipo=pulsar.ConsumerType.Shared,

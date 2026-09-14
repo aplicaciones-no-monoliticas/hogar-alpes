@@ -27,6 +27,16 @@ class EstadoTrabajoCambiado(EventoDominio):
     trabajo_id: uuid.UUID = None
     estado_anterior: str = ''
     estado_nuevo: str = ''
+    # Contexto del trabajo. Hace falta por dos razones: para enrutar el evento
+    # al stream de SU región —si la creación y el cambio de estado cayeran en
+    # streams distintos se perdería el orden dentro del trabajo (brecha G-2)— y
+    # para que el consumidor no tenga que preguntarle nada a este servicio.
+    pais: str = ''
+    ciudad: str = ''
+    canal: str = ''
+    partner_id: str = ''
+    categoria: str = ''
+    urgencia: str = ''
 
 
 @dataclass

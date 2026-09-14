@@ -81,6 +81,12 @@ class Trabajo(AgregacionRaiz, ValidarReglasMixin):
                 trabajo_id=self.id,
                 estado_anterior=anterior.value,
                 estado_nuevo=destino.value,
+                pais=self.ubicacion.pais,
+                ciudad=self.ubicacion.ciudad,
+                canal=self.solicitante.canal.value,
+                partner_id=self.solicitante.partner_id,
+                categoria=self.categoria.codigo,
+                urgencia=self.urgencia.nivel,
             )
         )
 
