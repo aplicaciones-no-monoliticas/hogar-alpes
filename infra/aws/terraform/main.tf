@@ -44,6 +44,17 @@ data "aws_vpc" "default" {
   default = true
 }
 
+# No toda zona de disponibilidad ofrece todos los tipos de instancia (nos
+# pasó con t3.xlarge en us-east-1e) — se filtran las zonas donde el tipo
+# elegido SÍ está disponible, y de ahí se toma un subnet.
+data "aws_ec2_instance_type_offerings" "disponibles" {
+  filter {
+    name   = "instance-type"
+    values = [var.instance_type]
+  }
+  location_type = "availability-zone"
+}
+
 data "aws_subnets" "default" {
   filter {
     name   = "vpc-id"
@@ -52,6 +63,10 @@ data "aws_subnets" "default" {
   filter {
     name   = "default-for-az"
     values = ["true"]
+  }
+  filter {
+    name   = "availability-zone"
+    values = data.aws_ec2_instance_type_offerings.disponibles.locations
   }
 }
 
