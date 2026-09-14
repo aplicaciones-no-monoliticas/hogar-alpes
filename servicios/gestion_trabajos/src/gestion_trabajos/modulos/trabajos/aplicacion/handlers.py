@@ -20,56 +20,43 @@ Desde GT-2, cada evento viaja con:
   deserializar el mensaje. La correlación mitiga `TO-4`: en un sistema
   distribuido, sin ella un incidente es inauditable.
 """
-import os
-
 from pydispatch import dispatcher
 
+from gestion_trabajos.config.topicos import region, topico_evt_trabajo
 from gestion_trabajos.seedwork.aplicacion.handlers import Handler
 from gestion_trabajos.seedwork.infraestructura.despachadores import Despachador
 
 from ..infraestructura.mapeadores import MapeadorEventosTrabajo
 
-TOPICO_TRABAJO_CREADO = 'evt-trabajo-creado'
-TOPICO_TRABAJO_ESTADO = 'evt-trabajo-estado'
-
-# País -> región. Es configuración, no código: abrir un país no obliga a tocar
-# este archivo. GT-3 lo mueve a `infra/regiones.json`.
-REGIONES = {'CO': 'andina', 'MX': 'norteamerica', 'BR': 'conosur', 'AR': 'conosur'}
-REGION_POR_DEFECTO = os.getenv('REGION_POR_DEFECTO', 'andina')
-
-
-def _region(pais: str | None) -> str:
-    return REGIONES.get((pais or '').upper(), REGION_POR_DEFECTO)
-
-
 def _propiedades(evento) -> dict:
     return {
         'partner_id': getattr(evento, 'partner_id', None),
-        'region': _region(getattr(evento, 'pais', None)),
+        'region': region(getattr(evento, 'pais', None)),
         'correlation_id': str(getattr(evento, 'trabajo_id', '')),
     }
+
+
+def _publicar(evento):
+    """Los dos tipos de evento van al MISMO stream regional, con `trabajo_id`
+    como clave: así el cambio de estado nunca se adelanta a la creación dentro
+    de un mismo trabajo (brecha G-2)."""
+    Despachador().publicar_evento(
+        evento,
+        topico_evt_trabajo(getattr(evento, 'pais', None)),
+        MapeadorEventosTrabajo(),
+        clave=str(evento.trabajo_id),
+        propiedades=_propiedades(evento),
+    )
 
 
 class HandlerTrabajoIntegracion(Handler):
     @staticmethod
     def handle_trabajo_creado(evento):
-        Despachador().publicar_evento(
-            evento,
-            TOPICO_TRABAJO_CREADO,
-            MapeadorEventosTrabajo(),
-            clave=str(evento.trabajo_id),
-            propiedades=_propiedades(evento),
-        )
+        _publicar(evento)
 
     @staticmethod
     def handle_estado_cambiado(evento):
-        Despachador().publicar_evento(
-            evento,
-            TOPICO_TRABAJO_ESTADO,
-            MapeadorEventosTrabajo(),
-            clave=str(evento.trabajo_id),
-            propiedades=_propiedades(evento),
-        )
+        _publicar(evento)
 
 
 dispatcher.connect(
