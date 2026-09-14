@@ -69,10 +69,10 @@ INF-2 (clúster)    ──►  INF-3 (políticas y tópicos)    ──►  todo 
 
 | ID | Tarea | Criterio | Depende de | Verificación | Est. |
 |---|---|---|---|---|---|
-| **OPS-1** | Esqueleto: plantilla, seedwork propio, dominio y aplicación traídos del módulo actual | **Habilitador** → base de OPS-2 · sostiene RNF-7 *(DDD)* | INF-6 | `pytest` del dominio verde sin base de datos ni broker | 1,5 h |
-| **OPS-2** | **Consumidor Pulsar**: patrón `evt-trabajo-.*`, Failover, **capa anticorrupción** evento → comando, Unidad de Trabajo propia, `ack` después del commit, `nack` ante excepción | **G-1** · CA-6.4 · RNF-1 · RNF-4 *(30 pt + 20 pt)* | OPS-1, CON-1, INF-3 | Crear un trabajo en GT → aparece el seguimiento · matar el consumidor a mitad y verificar reentrega | 3 h |
-| **OPS-3** | Idempotencia y API: `eventos_procesados` (APLICADO / DUPLICADO / HUERFANO), `GET /seguimientos/{id}`, `/conteo`, `/health` | **CA-6.4** · **CA-6.5** *(30 pt + CRUD 25 pt)* | OPS-2 | Reentregar el mismo evento no duplica · un cambio sin seguimiento queda HUERFANO y es contable | 2 h |
-| **OPS-4** | Pruebas: deduplicación, huérfano, orden por `trabajoId` | Control de riesgo (ver §10) | OPS-3 | `pytest` verde | 1 h |
+| **OPS-1** ✅ | Esqueleto: plantilla, seedwork propio, dominio y aplicación traídos del módulo actual | **Habilitador** → base de OPS-2 · sostiene RNF-7 *(DDD)* | INF-6 | `pytest` del dominio verde sin base de datos ni broker | 1,5 h |
+| **OPS-2** ✅ | **Consumidor Pulsar**: patrón `evt-trabajo-.*`, Failover, **capa anticorrupción** evento → comando, Unidad de Trabajo propia, `ack` después del commit, `nack` ante excepción | **G-1** · CA-6.4 · RNF-1 · RNF-4 *(30 pt + 20 pt)* | OPS-1, CON-1, INF-3 | ✅ `pytest` con eventos sintéticos (`test_consumidor.py`): `TrabajoCreado` abre el seguimiento, `EstadoTrabajoCambiado` lo actualiza · verificación contra un clúster real pendiente de GT-3/GT-4 (ver `docs/decisiones.md`, nota OPS-1…4) | 3 h |
+| **OPS-3** ✅ | Idempotencia y API: `eventos_procesados` (APLICADO / DUPLICADO / HUERFANO), `GET /seguimientos/{id}`, `/conteo`, `/health` | **CA-6.4** · **CA-6.5** *(30 pt + CRUD 25 pt)* | OPS-2 | ✅ Reentregar el mismo `evento_id` no duplica · un cambio sin seguimiento queda HUERFANO y es contable (`/eventos-procesados/conteo`) | 2 h |
+| **OPS-4** ✅ | Pruebas: deduplicación, huérfano, orden por `trabajoId` | Control de riesgo (ver §10) | OPS-3 | ✅ `pytest` verde — 20/20 (`servicios/operaciones`) | 1 h |
 
 ---
 
@@ -106,10 +106,10 @@ INF-2 (clúster)    ──►  INF-3 (políticas y tópicos)    ──►  todo 
 
 | ID | Tarea | Dueño | Criterio | Depende de | Verificación | Est. |
 |---|---|---|---|---|---|---|
-| **HER-1** ⚙️ | `generador_carga.py`: publica `CrearTrabajo` a una tasa y por un tiempo dados | S | **Habilitador** → sin él no hay escenario 6 ni 8 | CON-1 | 500 comandos publicados y consumidos | 1 h |
+| **HER-1** ⚙️ ✅ | `generador_carga.py`: publica `CrearTrabajo` a una tasa y por un tiempo dados | S | **Habilitador** → sin él no hay escenario 6 ni 8 | CON-1 | ✅ `--via-http`, `--topico cmd-trabajo-*` y `--topico evt-trabajo-*` (este último ya lo usa `escenario-8.sh` §5, sin esperar a esta tarea) · probado en modo `--via-http` contra un puerto cerrado: reporta el fallo correctamente | 1 h |
 | **HER-2** ⚙️ ✅ | `medir_latencia.py`: p50, p95, p99 y errores, solo con biblioteca estándar | J | **Habilitador** → instrumento de CA-6.2 y CA-8.2 | — | Corre contra `/health` | 45 min |
 | **HER-3** ⚙️ ✅ | `cargar_acreditaciones.py`: 100.000 solicitudes y aprobaciones | J | **Habilitador** → instrumento de CA-8.1 | ACR-3 | Prueba con 1.000 antes de la corrida grande | 1 h |
-| **ESC-6** ⚙️ | `escenario-6.sh`: línea base → detener el consumidor → carga → backlog → reanudar → conteos | S | **CA-6.1 … CA-6.6** *(30 pt)* | OPS-3, HER-1, INF-3 | Corrida con *T* = 3 min en verde | 2,5 h |
+| **ESC-6** ⚙️ ✅ | `escenario-6.sh`: línea base → detener el consumidor → carga → backlog → reanudar → conteos | S | **CA-6.1 … CA-6.6** *(30 pt)* | OPS-3, HER-1, INF-3 | Escrito y con sintaxis verificada (`bash -n`) · **corrida con *T* = 3 min contra un clúster real pendiente** — no había Docker disponible al escribirlo (ver `docs/decisiones.md`) | 2,5 h |
 | **ESC-8** ⚙️ | `escenario-8.sh`: proyección → latencia → drenaje con *k* = 1, 2, 4 → región en caliente | J | **CA-8.1 … CA-8.6** *(30 pt)* | EMP-4, HER-2, HER-3, INF-4 | Corrida reducida (10.000 proveedores) en verde | 3 h |
 | **ESC-M** ⚙️ | `mod-1.sh`, `mod-2.sh`, `mod-3.sh` | A | **CA-M1 · CA-M2 · CA-M3** *(30 pt)* | GT-6, GT-3, OPS-2 | Los tres en verde · el `StartedAt` de OPS y EMP no cambia | 2 h |
 | **ESC-E** ⚙️ | `esquemas.py`: campo nuevo aceptado y esquema incompatible rechazado | A | **CA-E1 · CA-E2** *(esquemas, 5 pt)* | INF-0, GT-4 | La salida muestra la aceptación y el rechazo | 1 h |
@@ -121,7 +121,7 @@ INF-2 (clúster)    ──►  INF-3 (políticas y tópicos)    ──►  todo 
 | ID | Tarea | Dueño | Criterio | Depende de | Verificación | Est. |
 |---|---|---|---|---|---|---|
 | **INT-1** ⚙️ | `docker-compose.yml` completo: Pulsar, 4 PostgreSQL, 4 API y los consumidores | A | **RNF-3** *(código que corre — 30 pt)* | GT-7, OPS-4, ACR-5, EMP-5 | **Desde un clon limpio**, `docker compose up` deja todo sano | 2 h |
-| **INT-2** ⚙️ | Postman reestructurada: carpeta por escenario, reintentos por consistencia eventual, entornos `local` y `aws` | S | **CA-M4** · R-4 · evidencia de CA-6.4 *(30 pt)* | INT-1 | `newman` verde en los dos entornos | 2 h |
+| **INT-2** ⚙️ ✅ | Postman reestructurada: carpeta por escenario, reintentos por consistencia eventual, entornos `local` y `aws` | S | **CA-M4** · R-4 · evidencia de CA-6.4 *(30 pt)* | INT-1 | ✅ «Eventos de dominio entre módulos» → «Eventos de integración entre servicios», apunta a `{{baseUrlOps}}` con reintentos (máx. 10, 500 ms) · entornos `local` y `aws` (`hogar-alpes-aws.postman_environment.json`) · JSON válido — **`newman` contra el sistema real pendiente**, requiere INT-1 | 2 h |
 | **DEP-1** ⚙️ | AWS: EC2 t3.xlarge, security group, `user-data.sh`, despliegue, `infra/aws/README.md` | A | **RNF-6** *(despliegue, 5 pt)* | INT-1 | Las cuatro API responden desde fuera · sin secretos en el repositorio | 2 h |
 | **DEP-2** ⚙️ | Corrida de los escenarios contra AWS y captura en `docs/resultados/` | S, J | Evidencia de CA-6.x y CA-8.x *(30 pt + 5 pt)* | DEP-1, ESC-6, ESC-8, ESC-M | Un archivo por escenario con su salida | 1,5 h |
 | **DOC-1** ⚙️ | `README.md`: escenarios, estructura, cómo desplegar, actividades | A | RNF-6 *(README — requisito de la guía)* | INT-1 | Un tercero levanta el sistema siguiendo solo el README | 1,5 h |
