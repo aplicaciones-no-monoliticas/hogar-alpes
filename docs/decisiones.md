@@ -301,6 +301,50 @@ Las dos veces que este patrón —una prueba que compara un valor contra sí mis
 
 ---
 
+## INT-1 y INF-5 · El sistema completo desde un clon limpio
+
+**Fecha:** 2026-09-14 · **Verificable con:** `docker compose down -v && docker compose up -d --build`
+
+### La topología descentralizada deja de ser una promesa
+
+Cada servicio comparte red **únicamente** con el broker y con su propia base de datos: `red-trabajos`, `red-operaciones`, `red-acreditacion`, `red-emparejamiento`. Desde `gestion-trabajos`, el host `postgres-acreditacion` **ni siquiera resuelve**.
+
+Eso importa para la sustentación: la respuesta a *«¿y cómo garantizan que un servicio no lee la base de otro?»* deja de ser «por disciplina del equipo» y pasa a ser «no hay ruta de red». Las 9 comprobaciones —cada servicio contra su base y contra dos ajenas— pasan.
+
+Lo que **no** queda separado por red es servicio↔servicio: los cuatro comparten `red-broker` porque todos necesitan al broker. Esa parte se sostiene en que ninguna variable de entorno apunta a otro servicio y en que no hay clientes HTTP en el código; conviene decirlo así y no de más.
+
+### El defecto que solo aparece en un arranque en frío
+
+Con la base vacía, `api` y `consumidor` —dos procesos del mismo servicio— llaman ambos a `crear_app()` y ejecutan `create_all` a la vez. Los dos ven «la tabla no existe» y los dos emiten `CREATE TABLE`. PostgreSQL deja pasar al primero y el segundo muere con un error que no menciona tablas:
+
+```
+psycopg2.errors.UniqueViolation: duplicate key value violates unique constraint
+"pg_type_typname_nsp_index"
+DETAIL:  Key (typname, typnamespace)=(trabajos, 2200) already exists.
+```
+
+La API de Gestión de Trabajos quedó muerta con `Worker failed to boot`, mientras su consumidor seguía arriba. **Es una moneda al aire**: gana quien llegue primero, y el `docker compose up` del tutor decide cuál de los dos procesos se cae.
+
+**Stiven y Juan Manuel ya lo habían encontrado y resuelto** en Operaciones, Acreditación y Emparejamiento, con un `_crear_tablas()` que reintenta —su comentario nombra el mismo índice del catálogo—. Los que quedaron atrás eran **Gestión de Trabajos y la plantilla**, y la plantilla era el peor de los dos: todo servicio futuro habría heredado el defecto. Se adoptó su misma solución, no una variante propia, para que las cuatro copias digan lo mismo.
+
+Tercera vez en esta entrega que el mismo arreglo hay que hacerlo en varias copias —candado reentrante, contratos, creación de tablas—. Es el costo de `TO-7`, y ya no es un argumento teórico: son tres casos con nombre.
+
+### Verificación ejecutada
+
+| Comprobación | Resultado |
+|---|---|
+| `docker compose up` desde **volúmenes borrados** | Las 4 API responden en 8000, 8001, 8002 y 8003 |
+| Contenedores muertos tras el arranque | Solo `pulsar-init` y `pulsar-config`, ambos con código 0: terminan por diseño |
+| Topología recreada **sin intervención** | `PASA · topología creada` · 7 tópicos particionados · 9 suscripciones pre-creadas |
+| Aislamiento de bases (CA-T1) | 9 de 9 |
+| Pruebas | 9 Gestión de Trabajos · 20 Operaciones · 19 Acreditación · 16 Emparejamiento |
+
+### Lo que todavía no cruza
+
+Gestión de Trabajos publica en `public/default/evt-trabajo-creado`, mientras Operaciones y Emparejamiento escuchan en `hogar-alpes/trabajos/evt-trabajo-{región}`. El sistema **arranca completo, pero los eventos aún no llegan entre servicios**: eso lo cierra **GT-3**, y hasta entonces el escenario 6 no se puede medir de punta a punta.
+
+---
+
 ## OPS-1…4 · HER-1 · ESC-6 · INT-2 · Operaciones consume por patrón, no por región
 
 **Fecha:** 2026-09-14 · **Ejecutado por:** Stiven Cardona · **Dónde:** `servicios/operaciones/`, `herramientas/generador_carga.py`, `escenarios/escenario-6.sh`, `postman/`

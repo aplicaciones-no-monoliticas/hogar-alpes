@@ -1,6 +1,10 @@
 # Hogar de los Alpes — Entrega 4
 #
-# Clúster de Apache Pulsar: ZooKeeper (metadatos) · 2 bookies (el log durable) ·
+# Cuatro microservicios, cada uno con su propia base de datos, sobre un clúster
+# de Apache Pulsar. `docker compose up` desde un clon limpio levanta el sistema
+# completo.
+#
+# Clúster de Pulsar: ZooKeeper (metadatos) · 2 bookies (el log durable) ·
 # 2 brokers. Los quórums ensemble=2 / write=2 / ack=2 hacen que cada entrada del
 # log quede en los DOS bookies antes de confirmarle al productor: eso es la
 # durabilidad sobre la que se apoya el escenario 6, no una palabra en una lámina.
@@ -10,6 +14,13 @@
 # pulsar://localhost:6650,localhost:6651 con listener_name="external". Sin esa
 # distinción, el broker le devolvería a un cliente del host una dirección
 # (broker-2) que no puede resolver.
+#
+# Topología de datos DESCENTRALIZADA (INF-5 · CA-T1): cada servicio comparte red
+# únicamente con el broker y con SU base de datos. Desde `gestion-trabajos`, el
+# host `postgres-acreditacion` ni siquiera resuelve. No es disciplina: es la red.
+#
+# Puertos de las API en el host: 8000 trabajos · 8001 operaciones ·
+# 8002 acreditación · 8003 emparejamiento.
 
 services:
   # --------------------------------------------------------------- Pulsar
@@ -151,19 +162,18 @@ services:
       PULSAR_ADMIN_URL: http://broker-1:8080
     command: bash /infra/inicializar.sh
 
-  # --------------------------------------------------------------- Servicios
-  postgres:
+  # ------------------------------------------------- 1 · Gestión de Trabajos
+  postgres-trabajos: &postgres
     image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: hogaralpes
-      POSTGRES_PASSWORD: hogaralpes
+    networks: [red-trabajos]
+    environment: &pg-env
+      POSTGRES_USER: ${POSTGRES_USER:-hogaralpes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hogaralpes}
       POSTGRES_DB: gestion_trabajos
-    ports:
-      - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata-trabajos:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hogaralpes -d gestion_trabajos"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hogaralpes}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -171,18 +181,17 @@ services:
   # Una imagen, dos procesos: la API y el consumidor escalan por separado.
   gestion-trabajos:
     build: ./servicios/gestion_trabajos
-    # Se une a red-broker para alcanzar los brokers, y a la red por defecto para
-    # su base de datos. INF-5 separa una red por servicio.
-    networks: [red-broker, default]
+    networks: [red-broker, red-trabajos]
     environment: &gt-env
-      DATABASE_URI: postgresql+psycopg2://hogaralpes:hogaralpes@postgres:5432/gestion_trabajos
+      DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-hogaralpes}:${POSTGRES_PASSWORD:-hogaralpes}@postgres-trabajos:5432/gestion_trabajos
       BROKER_HOST: broker-1
+      SERVICIO: gestion-trabajos
       MODO: api
     ports:
       # 5000 lo ocupa AirPlay Receiver en macOS; el host usa 8000 por defecto.
-      - "${PUERTO_HTTP:-8000}:5000"
+      - "${PUERTO_TRABAJOS:-8000}:5000"
     depends_on:
-      postgres:
+      postgres-trabajos:
         condition: service_healthy
       broker-1:
         condition: service_healthy
@@ -192,54 +201,47 @@ services:
   # y detenerlo sin tumbar la API (escenario 6).
   gestion-trabajos-consumidor:
     build: ./servicios/gestion_trabajos
-    networks: [red-broker, default]
+    networks: [red-broker, red-trabajos]
     environment:
       <<: *gt-env
       MODO: consumidor
     depends_on:
-      postgres:
+      postgres-trabajos:
         condition: service_healthy
       broker-1:
         condition: service_healthy
 
-  # Operaciones (OPS-1..4): su propia base de datos (CA-T1) — INT-1 (Andrés)
-  # todavía debe darle a cada servicio nuevo su propia red aislada (INF-5); por
-  # ahora comparte `default` con Gestión de Trabajos igual que el resto.
+  # ------------------------------------------------------- 2 · Operaciones
   postgres-operaciones:
-    image: postgres:16-alpine
+    <<: *postgres
+    networks: [red-operaciones]
     environment:
-      POSTGRES_USER: hogaralpes
-      POSTGRES_PASSWORD: hogaralpes
+      <<: *pg-env
       POSTGRES_DB: operaciones
     volumes:
       - pgdata-operaciones:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hogaralpes -d operaciones"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
 
   operaciones:
     build: ./servicios/operaciones
-    networks: [red-broker, default]
+    networks: [red-broker, red-operaciones]
     environment: &ops-env
-      DATABASE_URI: postgresql+psycopg2://hogaralpes:hogaralpes@postgres-operaciones:5432/operaciones
+      DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-hogaralpes}:${POSTGRES_PASSWORD:-hogaralpes}@postgres-operaciones:5432/operaciones
       BROKER_HOST: broker-1
-      MODO: api
       SERVICIO: operaciones
+      MODO: api
     ports:
-      - "${PUERTO_HTTP_OPS:-8001}:5000"
+      - "${PUERTO_OPERACIONES:-8001}:5000"
     depends_on:
       postgres-operaciones:
         condition: service_healthy
       broker-1:
         condition: service_healthy
 
-  # Sin puertos publicados — se puede detener sin tumbar la API (escenario 6) y
-  # escalar sin chocar con el puerto HTTP (escenario 8).
+  # El reactor del escenario 6: se detiene con `docker compose stop
+  # operaciones-consumidor` y la API de Operaciones sigue respondiendo.
   operaciones-consumidor:
     build: ./servicios/operaciones
-    networks: [red-broker, default]
+    networks: [red-broker, red-operaciones]
     environment:
       <<: *ops-env
       MODO: consumidor
@@ -249,12 +251,137 @@ services:
       broker-1:
         condition: service_healthy
 
+  # ------------------------------------------------------ 3 · Acreditación
+  postgres-acreditacion:
+    <<: *postgres
+    networks: [red-acreditacion]
+    environment:
+      <<: *pg-env
+      POSTGRES_DB: acreditacion
+    volumes:
+      - pgdata-acreditacion:/var/lib/postgresql/data
+
+  acreditacion:
+    build: ./servicios/acreditacion
+    networks: [red-broker, red-acreditacion]
+    environment: &acr-env
+      DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-hogaralpes}:${POSTGRES_PASSWORD:-hogaralpes}@postgres-acreditacion:5432/acreditacion
+      BROKER_HOST: broker-1
+      SERVICIO: acreditacion
+      MODO: api
+    ports:
+      - "${PUERTO_ACREDITACION:-8002}:5000"
+    depends_on:
+      postgres-acreditacion:
+        condition: service_healthy
+      broker-1:
+        condition: service_healthy
+
+  acreditacion-consumidor:
+    build: ./servicios/acreditacion
+    networks: [red-broker, red-acreditacion]
+    environment:
+      <<: *acr-env
+      MODO: consumidor
+    depends_on:
+      postgres-acreditacion:
+        condition: service_healthy
+      broker-1:
+        condition: service_healthy
+
+  # ----------------------------------------------------- 4 · Emparejamiento
+  postgres-emparejamiento:
+    <<: *postgres
+    networks: [red-emparejamiento]
+    environment:
+      <<: *pg-env
+      POSTGRES_DB: emparejamiento
+    volumes:
+      - pgdata-emparejamiento:/var/lib/postgresql/data
+
+  emparejamiento:
+    build: ./servicios/emparejamiento
+    networks: [red-broker, red-emparejamiento]
+    environment: &emp-env
+      DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-hogaralpes}:${POSTGRES_PASSWORD:-hogaralpes}@postgres-emparejamiento:5432/emparejamiento
+      BROKER_HOST: broker-1
+      SERVICIO: emparejamiento
+      MODO: api
+      REGION: andina
+    ports:
+      - "${PUERTO_EMPAREJAMIENTO:-8003}:5000"
+    depends_on:
+      postgres-emparejamiento:
+        condition: service_healthy
+      broker-1:
+        condition: service_healthy
+
+  # La proyección de proveedores: una sola réplica, consume `evt-acreditacion`.
+  # Separada de los consumidores regionales para que escalar el escenario 8 no
+  # arrastre réplicas ociosas de la proyección.
+  emparejamiento-proyeccion:
+    build: ./servicios/emparejamiento
+    networks: [red-broker, red-emparejamiento]
+    environment:
+      <<: *emp-env
+      MODO: consumidor
+      ROL_CONSUMIDOR: proyeccion
+    depends_on:
+      postgres-emparejamiento:
+        condition: service_healthy
+      broker-1:
+        condition: service_healthy
+
+  # Una réplica por región: es la unidad de despliegue del escenario 8.
+  # Escalar una región: `docker compose up -d --scale emparejamiento-andina=4`.
+  emparejamiento-andina: &emp-regional
+    build: ./servicios/emparejamiento
+    networks: [red-broker, red-emparejamiento]
+    environment:
+      <<: *emp-env
+      MODO: consumidor
+      ROL_CONSUMIDOR: regional
+      REGION: andina
+    depends_on:
+      postgres-emparejamiento:
+        condition: service_healthy
+      broker-1:
+        condition: service_healthy
+
+  emparejamiento-norteamerica:
+    <<: *emp-regional
+    environment:
+      <<: *emp-env
+      MODO: consumidor
+      ROL_CONSUMIDOR: regional
+      REGION: norteamerica
+
+  # Cono Sur NO arranca por defecto: se agrega EN CALIENTE durante el escenario 8
+  # para medir que las regiones activas no se interrumpen (CA-8.4).
+  #
+  #   bash infra/pulsar/agregar-region.sh conosur
+  #   docker compose --profile conosur up -d emparejamiento-conosur
+  emparejamiento-conosur:
+    <<: *emp-regional
+    profiles: [conosur]
+    environment:
+      <<: *emp-env
+      MODO: consumidor
+      ROL_CONSUMIDOR: regional
+      REGION: conosur
+
 networks:
   red-broker:
+  red-trabajos:
+  red-operaciones:
+  red-acreditacion:
+  red-emparejamiento:
 
 volumes:
-  pgdata:
+  pgdata-trabajos:
   pgdata-operaciones:
+  pgdata-acreditacion:
+  pgdata-emparejamiento:
   zkdata:
   bookie1data:
   bookie2data:
