@@ -469,3 +469,28 @@ Sin Docker ni credenciales de AWS en este entorno: lo verificable sin ellos se v
 | `infra/aws/user-data.sh` | Sintaxis verificada; **no** se aprovisionó una EC2 real |
 
 **Pendiente, en cuanto alguien tenga Docker y (para DEP-1) credenciales de AWS a mano:** correr `mod-1.sh`, `mod-2.sh`, `mod-3.sh` y `esquemas.py` contra un clúster real, y ejecutar el aprovisionamiento de `infra/aws/user-data.sh` sobre una instancia EC2.
+
+---
+
+## ESC-6 · Simplificación tras GT-3 — un solo generador, no dos caminos en paralelo
+
+**Fecha:** 2026-09-14 · **Ejecutado por:** Stiven Cardona · **Dónde:** `herramientas/generador_carga.py`, `escenarios/escenario-6.sh`
+
+Con GT-3 fusionado (ver la sección "GT-3 · Los eventos cruzan entre servicios por primera vez" arriba), Gestión de Trabajos ya publica el `TrabajoCreado`/`EstadoTrabajoCambiado` real en `evt-trabajo-{región}`. El atajo que `escenario-6.sh` usaba —lanzar `generador_carga.py` dos veces en paralelo, una vía HTTP contra GT y otra publicando eventos sintéticos directo en Pulsar— dejó de ser necesario: existía únicamente porque GT no llegaba hasta el stream que Operaciones consume.
+
+**Qué cambió:**
+
+1. `generador_carga.py --via-http` ahora acepta `--con-cambios-estado`: tras el `POST /trabajos`, hace `PUT /trabajos/{id}/estado` con `EMPAREJANDO` (transición válida desde `CREADO`). Antes esa bandera solo tenía efecto en el modo `--topico evt-trabajo-*`.
+2. `escenario-6.sh` pasó de dos procesos en paralelo (`pid_http`, `pid_evt`) a una sola llamada. Se cae la sección de "dos caminos" de la cabecera del script y la nota extensa sobre GT-3/GT-4 pendientes.
+3. El modo de publicación sintética (`--topico evt-trabajo-*`) **no se elimina**: sigue siendo el correcto para `escenario-8.sh`, que necesita precargar un backlog de eventos sin que exista un `Trabajo` real en la base de GT (el propósito ahí es medir el drenaje del consumidor, no probar la creación).
+
+**Por qué importa para la sustentación:** es un ejemplo concreto de que las herramientas de esta entrega no son un compromiso permanente — el atajo se documentó como temporal cuando se escribió (`docs/decisiones.md`, sección OPS-1…4) y se retiró en cuanto la pieza que lo hacía necesario (GT-3) llegó, sin que nadie tuviera que acordarse de revisarlo por fuera del proceso normal de lectura de este documento.
+
+### Verificación ejecutada
+
+| Comprobación | Resultado |
+|---|---|
+| `generador_carga.py --via-http ... --con-cambios-estado` contra un puerto cerrado | Reporta la falla de conexión correctamente (`FALLA`, código de salida 1) — el POST y el PUT subsiguiente fallan igual de explícito |
+| `escenarios/escenario-6.sh` | `bash -n` (sintaxis) — **no** se corrió contra un clúster real: sigue sin haber Docker en este entorno |
+
+**Sigue pendiente** (igual que antes de esta simplificación): correr `escenario-6.sh` de punta a punta contra el sistema real y confirmar los seis criterios de aceptación.

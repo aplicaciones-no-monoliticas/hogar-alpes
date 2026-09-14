@@ -8,25 +8,13 @@
 # tiene que significar «el consumidor se atrasó», nunca «el productor se
 # bloqueó».
 #
-# *** Nota sobre el estado real del código (léase antes de correr) ***
-# GT-3 (stream unificado `evt-trabajo-{región}`) y GT-4 (`cmd-trabajo-.*`)
-# todavía no están hechos: hoy GT sigue publicando en los tópicos viejos
-# `evt-trabajo-creado` / `evt-trabajo-estado`, que Operaciones ya NO consume
-# (consume el contrato nuevo de CON-1). Por eso este script, igual que la nota
-# de verificación de EMP-3 en `docs/03-tareas.md` §5, separa la carga en DOS
-# caminos que se ejercitan EN PARALELO:
-#
-#   1. `--via-http` contra GT real — mide CA-6.1/CA-6.2 (que GT no se entera
-#      de que Operaciones está caído). Estos trabajos NO llegan hoy a
-#      Operaciones, porque su evento cae en el tópico viejo.
-#   2. Publicación sintética directa en `evt-trabajo-{REGION}`, con el
-#      contrato de CON-1 — mide CA-6.3…CA-6.6 (el comportamiento del
-#      consumidor de Operaciones), el mismo atajo que usó EMP-3 mientras GT-3
-#      no aterriza.
-#
-# Cuando GT-3/GT-4 se fusionen, el camino (2) sobra: `--via-http` bastará para
-# las dos mitades del escenario, porque GT publicará él mismo en el stream que
-# Operaciones consume. La bifurcación queda anotada en `docs/decisiones.md`.
+# Con GT-3 fusionado, GT publica el `TrabajoCreado`/`EstadoTrabajoCambiado`
+# real en `evt-trabajo-{región}` (ver `docs/decisiones.md`, sección GT-3):
+# ya no hace falta el atajo de publicar eventos sintéticos directo en Pulsar
+# que este script usaba antes. Toda la carga entra por
+# `herramientas/generador_carga.py --via-http`, el mismo camino que seguiría
+# un cliente real — un solo generador para las dos mitades del escenario
+# (CA-6.1/6.2 del lado de GT, CA-6.3…6.6 del lado de Operaciones).
 #
 # Uso:
 #   escenarios/escenario-6.sh                       # T=3 min, N=300 (demo)
@@ -45,8 +33,6 @@ REGION="${REGION:-andina}"
 
 URL_GT="${URL_GT:-http://localhost:8000}"
 URL_OPS="${URL_OPS:-http://localhost:8001}"
-BROKER_URL="${BROKER_URL:-pulsar://localhost:6650}"
-BROKER_LISTENER="${BROKER_LISTENER:-external}"
 
 # Nombres de servicio en docker-compose.yml. Sobrescribibles: este script no
 # debe reescribirse solo porque INT-1 (Andrés) eligió otro nombre.
@@ -119,10 +105,6 @@ print(m.group(1) if m else 0)
 resultado "# Escenario 6 · Disponibilidad — $FECHA"
 resultado ""
 resultado "Parámetros: N=$N · T=${T}min · REGION=$REGION"
-resultado ""
-resultado "> Carga dividida en dos caminos — ver la nota al principio del script:"
-resultado "> vía HTTP contra GT real (CA-6.1/6.2) + publicación sintética en"
-resultado "> \`evt-trabajo-$REGION\` (CA-6.3…6.6), mientras GT-3/GT-4 no aterrizan."
 
 # ---------------------------------------------------------------- línea base
 resultado ""
@@ -144,27 +126,15 @@ compose stop "$SERVICIO_OPS_CONSUMIDOR" >>"$SALIDA" 2>&1
 resultado "  $SERVICIO_OPS_CONSUMIDOR detenido"
 
 resultado ""
-resultado "## 3. Carga durante ${T} min (N=$N trabajos + cambios de estado)"
+resultado "## 3. Carga durante ${T} min (N=$N trabajos + cambios de estado), vía HTTP contra GT real"
 
 inicio_carga=$(date +%s)
-# (1) vía HTTP contra GT real — CA-6.1 / CA-6.2
 python "$RAIZ/herramientas/generador_carga.py" --via-http "$URL_GT" \
-  --total "$N" --duracion "$((T * 60))" --progreso-cada 100 \
-  >>"$SALIDA" 2>&1 &
-pid_http=$!
-
-# (2) publicación sintética en evt-trabajo-$REGION — CA-6.3…6.6
-python "$RAIZ/herramientas/generador_carga.py" \
-  --topico "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION" \
   --total "$N" --duracion "$((T * 60))" --con-cambios-estado --progreso-cada 100 \
-  --broker "$BROKER_URL" --listener "$BROKER_LISTENER" \
-  >>"$SALIDA" 2>&1 &
-pid_evt=$!
-
-wait "$pid_http"; rc_http=$?
-wait "$pid_evt"; rc_evt=$?
+  >>"$SALIDA" 2>&1
+rc_carga=$?
 duracion_carga=$(( $(date +%s) - inicio_carga ))
-resultado "  carga generada en ${duracion_carga}s (http rc=$rc_http · eventos rc=$rc_evt)"
+resultado "  carga generada en ${duracion_carga}s (rc=$rc_carga)"
 
 # ---------------------------------------------------------------- durante
 resultado ""
