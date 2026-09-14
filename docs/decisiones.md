@@ -421,8 +421,51 @@ Lo de la suscripción no es cosmético: con el nombre viejo, la suscripción que
 
 ### Lo que esto desbloquea
 
-`escenario-6.sh` publicaba eventos sintéticos directo en `evt-trabajo-{región}` porque GT no llegaba hasta allí. **Ese atajo ya no hace falta**: el camino real —`POST /trabajos` → Pulsar → Operaciones— está probado de punta a punta, así que el escenario 6 puede medirse contra el sistema de verdad, que es lo que el tutor va a querer ver.
-| `herramientas/generador_carga.py` | Importa y corre en modo `--via-http` contra un puerto cerrado: reporta la falla de conexión correctamente (`FALLA`, código de salida 1) |
-| `postman/hogar-alpes.postman_collection.json` | JSON válido tras la reestructuración; **no** se corrió con `newman` (requiere el sistema completo arriba) |
+`escenario-6.sh` publicaba eventos sintéticos directo en `evt-trabajo-{región}` porque GT no llegaba hasta allí. **Ese atajo ya no hace falta**: el camino real —`POST /trabajos` → Pulsar → Operaciones— está probado de punta a punta, así que el escenario 6 puede medirse contra el sistema de verdad, que es lo que el tutor va a querer ver. (Nota de edición: había dos filas de tabla y una frase duplicadas de la sección OPS-1…4 colgando al final de este archivo — se quitaron, el contenido ya está arriba.)
 
-**Pendiente antes de la corrida formal de ESC-6** (a cargo de quien tenga Docker a mano): `docker compose up -d`, correr `escenarios/escenario-6.sh` de punta a punta y confirmar los seis criterios de aceptación contra el clúster real.
+**Sigue pendiente antes de la corrida formal de ESC-6** (a cargo de quien tenga Docker a mano): `docker compose up -d`, correr `escenarios/escenario-6.sh` de punta a punta contra el sistema real y confirmar los seis criterios de aceptación — ahora con el camino sintético de por medio ya no siendo necesario, según lo de arriba.
+
+---
+
+## GT-4…7 · ESC-M · ESC-E · DEP-1 · DOC-1 · Cerrando el ciclo de Gestión de Trabajos
+
+**Fecha:** 2026-09-14 · **Dónde:** `servicios/gestion_trabajos/`, `escenarios/`, `infra/aws/`, `infra/sidecar/`, `README.md`
+
+### El consumidor de comandos ya existía; el contrato que usaba, no
+
+`gestion_trabajos` ya tenía, desde antes de esta entrega, un consumidor Shared suscrito por patrón a `cmd-trabajo-.*` (`infraestructura/consumidores.py`). Lo que le faltaba a GT-4 no era ese mecanismo: era que su copia del contrato (`schema/v1/comandos.py`) seguía siendo la versión pre-CON-1 —`ComandoCrearTrabajo(ComandoIntegracion)`, con la carga anidada bajo `data` y sin un solo campo `default`—, incompatible con `contratos/v1/cmd_trabajo.py`, que ya traía `trabajo_id`. La migración fue reemplazar el contrato local por el real y ajustar la traducción del consumidor de `valor.data.campo` a `valor.campo` (records planos).
+
+**La idempotencia vive en el handler, no en el broker.** `CrearTrabajoHandler` consulta `RepositorioTrabajos.obtener_por_id(trabajo_id)` antes de construir la agregación: si ya existe, devuelve su id sin volver a publicar `TrabajoCreado`. Es la misma forma que ya usa Acreditación para sus comandos repetidos (`ACR-3`) y Emparejamiento para `EmparejarTrabajo` (`EMP-3`) — el patrón se repite porque el problema es el mismo: entrega al-menos-una-vez, handler responsable de no duplicar.
+
+### El adaptador en memoria es por PROCESO, no por sistema
+
+`RepositorioTrabajosMemoria` guarda un diccionario de clase, compartido entre instancias **dentro del mismo proceso**. Con gunicorn en más de un worker, un `POST` y el `GET` que lo verifica pueden caer en workers distintos con diccionarios distintos — el escenario fallaría por una razón que no tiene nada que ver con la arquitectura, la misma clase de trampa que ya documentaron `CON-1` e `INF-4` con otras pruebas. La corrección no es hacer el adaptador más elaborado (eso lo convertiría en algo que nadie usaría en producción): es que `mod-1.sh` fuerza `WORKERS=1` mientras dura la demostración, y lo dice en el propio `docker-compose.yml`.
+
+### El sidecar de reglas regionales vivía dentro de la imagen — MOD-2 no era real
+
+`reglas_regionales.json` se copiaba a la imagen con `COPY src/` del Dockerfile. Bajo esa configuración, "agregar un país" habría exigido reconstruir la imagen — contradice la medida exacta que CA-M2 pide (0 archivos de código cambiados). Se externalizó a `infra/sidecar/reglas_regionales.json`, montado como volumen de solo lectura en `gestion-trabajos` y `gestion-trabajos-consumidor`, con `RUTA_REGLAS_REGIONALES` apuntando ahí. El archivo que queda dentro del servicio (`.../infraestructura/reglas_regionales.json`) sigue siendo el valor por defecto para quien lo corra fuera de Compose (por ejemplo, `pytest`).
+
+**`mod-2.sh` agrega Chile, no Perú.** La colección de Postman ya tiene un caso que depende de que Perú **no** esté configurado (cae al contrato `_default`, es la prueba de la brecha por defecto del sidecar). Agregar Perú en la demostración de MOD-2 habría invalidado esa prueba en lugar de sumarse a ella — un conflicto entre dos partes de la misma entrega que solo aparece si se mira la colección completa, no cada escenario por separado.
+
+### `mod-3.sh` se niega a correr sobre cambios sin comitear
+
+El escenario parchea `objetos_valor.py` en caliente y lo revierte con `git checkout` al final. Si alguien ya tenía cambios sin comitear en ese archivo —trabajando en otra cosa, por ejemplo—, un `git checkout` a ciegas se los borraría. El script comprueba `git diff --quiet` sobre el archivo exacto antes de tocar nada y aborta si no está limpio: es el mismo principio de "antes de sobrescribir, mirar qué hay" que vale para cualquier automatización que edita el árbol de trabajo de otra persona.
+
+### `esquemas.py` importa el contrato real, no lo copia
+
+A diferencia de `spike_esquemas.py` (clases de usar y tirar, preguntas genéricas), `escenarios/esquemas.py` importa `contratos.v1.cmd_trabajo.ComandoCrearTrabajo` para la versión "nueva" de CA-E1: si alguien cambia el contrato real, este script evoluciona con él en vez de quedar demostrando una versión vieja. Solo la versión "vieja" (sin `trabajo_id`) y la versión "incompatible" (con `trabajo_id: Long`) se declaran ad hoc, porque esas dos no existen en ningún lado del código real — son, a propósito, los dos puntos de comparación.
+
+### Verificación ejecutada
+
+Sin Docker ni credenciales de AWS en este entorno: lo verificable sin ellos se verificó; lo que necesita un clúster o una instancia real queda anotado como pendiente, no como hecho.
+
+| Comprobación | Resultado |
+|---|---|
+| `pytest` de `gestion_trabajos` (Python 3.11.16, instalado con `uv`) | **12 / 12** — incluye `test_aplicacion_trabajos.py` (GT-4, GT-6), nueva |
+| Regresión de los otros tres servicios | `operaciones` 20/20 · `emparejamiento` 16/16 · `acreditacion` 19/19 — sin cambios de comportamiento |
+| `tests/conftest.py` agregado a `gestion_trabajos` | La suite pasó de ~60 s a 0,4 s (antes, cada prueba esperaba el timeout de un broker inexistente) |
+| `docker-compose.yml` (variables y volúmenes nuevos) | YAML válido |
+| `escenarios/mod-1.sh`, `mod-2.sh`, `mod-3.sh`, `esquemas.py` | Sintaxis verificada (`bash -n`, `py_compile`); las clases de esquema de `esquemas.py` se instanciaron sin broker y tienen los campos esperados |
+| `infra/aws/user-data.sh` | Sintaxis verificada; **no** se aprovisionó una EC2 real |
+
+**Pendiente, en cuanto alguien tenga Docker y (para DEP-1) credenciales de AWS a mano:** correr `mod-1.sh`, `mod-2.sh`, `mod-3.sh` y `esquemas.py` contra un clúster real, y ejecutar el aprovisionamiento de `infra/aws/user-data.sh` sobre una instancia EC2.
