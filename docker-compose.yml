@@ -187,6 +187,19 @@ services:
       BROKER_HOST: broker-1
       SERVICIO: gestion-trabajos
       MODO: api
+      # MOD-1 (CA-M1, escenarios/mod-1.sh): postgres (por defecto) | memoria.
+      ADAPTADOR_TRABAJOS: ${ADAPTADOR_TRABAJOS:-postgres}
+      # El adaptador en memoria es POR PROCESO (§ "Un diccionario por
+      # instancia" de repositorios_memoria.py): con más de un worker de
+      # gunicorn, un POST y el GET que lo verifica pueden caer en procesos
+      # distintos. mod-1.sh fuerza WORKERS=1 mientras dura la demostración.
+      WORKERS: ${WORKERS:-2}
+      # Escenario 2 (MOD-2): el sidecar lee de un volumen, no de la imagen —
+      # "agregar un país" es editar infra/sidecar/reglas_regionales.json y
+      # reiniciar el proceso, sin reconstruir nada (ver infra/sidecar/README.md).
+      RUTA_REGLAS_REGIONALES: /app/config/reglas_regionales.json
+    volumes:
+      - ./infra/sidecar/reglas_regionales.json:/app/config/reglas_regionales.json:ro
     ports:
       # 5000 lo ocupa AirPlay Receiver en macOS; el host usa 8000 por defecto.
       - "${PUERTO_TRABAJOS:-8000}:5000"
@@ -205,6 +218,8 @@ services:
     environment:
       <<: *gt-env
       MODO: consumidor
+    volumes:
+      - ./infra/sidecar/reglas_regionales.json:/app/config/reglas_regionales.json:ro
     depends_on:
       postgres-trabajos:
         condition: service_healthy

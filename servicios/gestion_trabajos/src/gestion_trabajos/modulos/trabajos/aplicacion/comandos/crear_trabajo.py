@@ -1,8 +1,22 @@
 """Comando CrearTrabajo — el lado de escritura del CQS.
 
 El handler no persiste: registra la operación en la Unidad de Trabajo y hace
-commit. La UoW publica los eventos de dominio antes del commit (para el módulo
-`operaciones`) y los de integración después (para el broker).
+commit. La UoW publica los eventos de dominio antes del commit (para otros
+módulos dentro de este mismo proceso, si los hay) y los de integración
+después (para el broker — es como Operaciones se entera hoy, ya extraído a su
+propio servicio desde GT-5).
+
+**`trabajo_id` opcional (GT-4, CA-E1).** Lo genera el productor —el generador
+de carga hoy, el Gateway de Partners en la Entrega 5—, no este servicio. Dos
+consecuencias:
+
+1. Da la clave de partición desde el primer mensaje del flujo (`cmd-trabajo-*`
+   y `evt-trabajo-*` comparten `trabajo_id`).
+2. La creación es **idempotente**: si el productor reintenta el mismo comando
+   —por ejemplo, porque no vio la confirmación—, `CrearTrabajoHandler` lo
+   reconoce y devuelve el trabajo que ya existe en vez de crear un segundo.
+   Sin `trabajo_id` (los clientes HTTP que no lo mandan) no hay con qué
+   deduplicar: cada `POST /trabajos` sin él crea un trabajo nuevo, como antes.
 """
 from dataclasses import dataclass, field
 
@@ -19,6 +33,7 @@ from .base import TrabajoBaseHandler
 
 @dataclass
 class CrearTrabajo(Comando):
+    trabajo_id: str = ''
     canal: str = ''
     partner_id: str = ''
     referencia_externa: str = ''
@@ -32,7 +47,16 @@ class CrearTrabajo(Comando):
 
 class CrearTrabajoHandler(TrabajoBaseHandler):
     def handle(self, comando: CrearTrabajo) -> str:
+        if comando.trabajo_id:
+            repositorio = self.fabrica_repositorio.crear_objeto(RepositorioTrabajos)
+            existente = repositorio.obtener_por_id(comando.trabajo_id)
+            if existente:
+                # Idempotencia (GT-4): la reentrega del mismo trabajo_id no crea
+                # un segundo trabajo ni vuelve a publicar TrabajoCreado.
+                return str(existente.id)
+
         trabajo_dto = TrabajoDTO(
+            id=comando.trabajo_id,
             canal=comando.canal,
             partner_id=comando.partner_id,
             referencia_externa=comando.referencia_externa,

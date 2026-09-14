@@ -26,9 +26,6 @@ from gestion_trabajos.modulos.trabajos.aplicacion.queries.obtener_trabajo import
 from gestion_trabajos.modulos.trabajos.aplicacion.queries.obtener_trabajos_por_estado import (
     ObtenerTrabajosPorEstado,
 )
-from gestion_trabajos.modulos.operaciones.aplicacion.queries import (
-    ObtenerSeguimientoDeTrabajo,
-)
 
 logger = logging.getLogger(__name__)
 bp = Blueprint('trabajos', __name__, url_prefix='/trabajos')
@@ -41,6 +38,7 @@ def crear_trabajo():
     try:
         cuerpo = request.json or {}
         comando = CrearTrabajo(
+            trabajo_id=cuerpo.get('trabajo_id', ''),
             canal=cuerpo.get('canal', 'MARKETPLACE'),
             partner_id=cuerpo.get('partner_id', ''),
             referencia_externa=cuerpo.get('referencia_externa', ''),
@@ -82,12 +80,3 @@ def cambiar_estado(id=None):
         return jsonify({'id': id, 'estado': cuerpo.get('estado')}), 202
     except ReglaNegocioExcepcion as e:
         return jsonify({'error': str(e)}), 409
-
-
-@bp.route('/<id>/seguimiento', methods=['GET'])
-def obtener_seguimiento(id=None):
-    """Lee el módulo `operaciones`: prueba de que el evento de dominio cruzó."""
-    resultado = ejecutar_query(ObtenerSeguimientoDeTrabajo(trabajo_id=id))
-    if not resultado.resultado:
-        return jsonify({'error': 'Sin seguimiento operativo'}), 404
-    return jsonify(resultado.resultado), 200

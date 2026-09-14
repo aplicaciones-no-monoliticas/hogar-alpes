@@ -6,6 +6,14 @@ antes de atender el primer request.
 
 El consumidor **ya no arranca aquí**: corre como proceso propio
 (`python -m gestion_trabajos.consumidor`). Ver `consumidor.py`.
+
+**GT-5 — el módulo `operaciones` ya no vive aquí.** Se extrajo a
+`servicios/operaciones` (OPS-1..4), que se entera de los trabajos por su
+propia suscripción a `evt-trabajo-{región}`, no leyendo este proceso. `GET
+/trabajos/{id}/seguimiento` — que antes servía GT leyendo el módulo en el
+mismo proceso (G-6) — se retira: tras la extracción, esa llamada habría sido
+GT → OPS por HTTP, prohibida por RNF-1. La consulta equivalente es `GET
+/seguimientos/{id}` contra la API de Operaciones.
 """
 import logging
 import os
@@ -15,12 +23,10 @@ from flask import Flask, jsonify
 
 def importar_modelos_alchemy():
     import gestion_trabajos.modulos.trabajos.infraestructura.dto  # noqa: F401
-    import gestion_trabajos.modulos.operaciones.infraestructura.dto  # noqa: F401
 
 
 def registrar_handlers():
     """Suscribe los módulos a los eventos de dominio y de integración."""
-    import gestion_trabajos.modulos.operaciones.aplicacion.handlers  # noqa: F401
     import gestion_trabajos.modulos.trabajos.aplicacion.handlers  # noqa: F401
 
 
@@ -30,7 +36,6 @@ def registrar_comandos_y_queries():
     import gestion_trabajos.modulos.trabajos.aplicacion.comandos.crear_trabajo  # noqa: F401
     import gestion_trabajos.modulos.trabajos.aplicacion.queries.obtener_trabajo  # noqa: F401
     import gestion_trabajos.modulos.trabajos.aplicacion.queries.obtener_trabajos_por_estado  # noqa: F401
-    import gestion_trabajos.modulos.operaciones.aplicacion.queries  # noqa: F401
 
 
 def _crear_tablas(bases, engine):
@@ -90,10 +95,7 @@ def crear_app(configuracion=None):
         from gestion_trabajos.modulos.trabajos.infraestructura.dto import (
             Base as BaseTrabajos,
         )
-        from gestion_trabajos.modulos.operaciones.infraestructura.dto import (
-            Base as BaseOperaciones,
-        )
-        _crear_tablas([BaseTrabajos, BaseOperaciones], db.engine)
+        _crear_tablas([BaseTrabajos], db.engine)
 
     from gestion_trabajos.api.trabajos import bp as bp_trabajos
     app.register_blueprint(bp_trabajos)

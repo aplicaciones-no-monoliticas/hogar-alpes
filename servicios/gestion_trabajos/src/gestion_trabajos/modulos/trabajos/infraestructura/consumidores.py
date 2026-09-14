@@ -21,24 +21,27 @@ logger = logging.getLogger(__name__)
 
 
 def _manejar_crear_trabajo(valor, mensaje):
-    """Traduce el comando de integración a un comando de aplicación."""
+    """Traduce el comando de integración (CON-1, contrato plano) a un comando
+    de aplicación. `trabajo_id` viaja en el mensaje (GT-4): si el productor
+    reintenta, `CrearTrabajoHandler` lo reconoce y no crea un segundo trabajo
+    — la idempotencia vive en la aplicación, no aquí."""
     from gestion_trabajos.seedwork.aplicacion.comandos import ejecutar_comando
 
     from ..aplicacion.comandos.crear_trabajo import CrearTrabajo
 
-    datos = valor.data
-    logger.info('Comando recibido: %s', datos)
+    logger.info('Comando recibido: trabajo_id=%s', valor.trabajo_id)
 
     ejecutar_comando(CrearTrabajo(
-        canal=datos.canal,
-        partner_id=datos.partner_id,
-        referencia_externa=datos.referencia_externa,
-        categoria=datos.categoria,
-        urgencia=datos.urgencia,
-        pais=datos.pais,
-        ciudad=datos.ciudad,
-        direccion=datos.direccion,
-        descripcion=datos.descripcion,
+        trabajo_id=valor.trabajo_id,
+        canal=valor.canal,
+        partner_id=valor.partner_id,
+        referencia_externa=valor.referencia_externa,
+        categoria=valor.categoria,
+        urgencia=valor.urgencia,
+        pais=valor.pais,
+        ciudad=valor.ciudad,
+        direccion=valor.direccion,
+        descripcion=valor.descripcion,
     ))
 
 
