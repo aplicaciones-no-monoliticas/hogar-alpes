@@ -1,0 +1,9 @@
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+SQLAlchemy==2.0.30
+psycopg2-binary==2.9.9
+PyDispatcher==2.0.7
+pulsar-client[avro]==3.5.0
+fastavro==1.9.4
+gunicorn==22.0.0
+pytest==8.2.0

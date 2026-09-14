@@ -202,11 +202,59 @@ services:
       broker-1:
         condition: service_healthy
 
+  # Operaciones (OPS-1..4): su propia base de datos (CA-T1) — INT-1 (Andrés)
+  # todavía debe darle a cada servicio nuevo su propia red aislada (INF-5); por
+  # ahora comparte `default` con Gestión de Trabajos igual que el resto.
+  postgres-operaciones:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hogaralpes
+      POSTGRES_PASSWORD: hogaralpes
+      POSTGRES_DB: operaciones
+    volumes:
+      - pgdata-operaciones:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hogaralpes -d operaciones"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  operaciones:
+    build: ./servicios/operaciones
+    networks: [red-broker, default]
+    environment: &ops-env
+      DATABASE_URI: postgresql+psycopg2://hogaralpes:hogaralpes@postgres-operaciones:5432/operaciones
+      BROKER_HOST: broker-1
+      MODO: api
+      SERVICIO: operaciones
+    ports:
+      - "${PUERTO_HTTP_OPS:-8001}:5000"
+    depends_on:
+      postgres-operaciones:
+        condition: service_healthy
+      broker-1:
+        condition: service_healthy
+
+  # Sin puertos publicados — se puede detener sin tumbar la API (escenario 6) y
+  # escalar sin chocar con el puerto HTTP (escenario 8).
+  operaciones-consumidor:
+    build: ./servicios/operaciones
+    networks: [red-broker, default]
+    environment:
+      <<: *ops-env
+      MODO: consumidor
+    depends_on:
+      postgres-operaciones:
+        condition: service_healthy
+      broker-1:
+        condition: service_healthy
+
 networks:
   red-broker:
 
 volumes:
   pgdata:
+  pgdata-operaciones:
   zkdata:
   bookie1data:
   bookie2data:

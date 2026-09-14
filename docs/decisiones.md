@@ -298,3 +298,47 @@ Las dos veces que este patrón —una prueba que compara un valor contra sí mis
 | `SolicitarAcreditacion` ×2 y `AprobarAcreditacion` ×2 por `cmd-acreditacion` (mismo `acreditacion_id`) | Solo 2 eventos en el store (versiones 1 y 2), solo 2 snapshots publicados en `evt-acreditacion`: la reentrega no duplicó nada |
 | `TrabajoCreado` sintético en `evt-trabajo-andina` → `emparejamiento-andina` | Candidatos correctos desde la proyección, `CandidatosIdentificados` publicado en `evt-emparejamiento`; con una categoría sin proveedores acreditados, `SinCandidatos` |
 | `evt-acreditacion` → proyección de Emparejamiento | `GET /candidatos` reflejó el proveedor aprobado por Acreditación, sin ninguna llamada síncrona entre los dos servicios |
+
+---
+
+## OPS-1…4 · HER-1 · ESC-6 · INT-2 · Operaciones consume por patrón, no por región
+
+**Fecha:** 2026-09-14 · **Ejecutado por:** Stiven Cardona · **Dónde:** `servicios/operaciones/`, `herramientas/generador_carga.py`, `escenarios/escenario-6.sh`, `postman/`
+
+### Por qué Operaciones no replica el modelo "una réplica por región" de Emparejamiento
+
+Emparejamiento necesita una réplica por región porque su comando (`EmparejarTrabajo`) lee la proyección local y produce un resultado por trabajo: el paralelismo es la medida del escenario 8. Operaciones solo abre o actualiza un seguimiento — no hay nada que ganar particionando por región y sí algo que perder: una réplica por región multiplicaría contenedores sin que ningún criterio de aceptación lo pida. Por eso `config/topicos.py` arma un **patrón** (`evt-trabajo-.*`) y una sola suscripción durable (`operaciones`, Failover) lo cubre todo, incluida una región agregada en caliente (CA-8.4) sin redesplegar. Confirmado con el spike de `pulsar-client` (INF-0, pregunta P2 y el mecanismo de `pattern_auto_discovery_period`): el cliente acepta un `re.compile(...)` como argumento `topic` de `subscribe()`.
+
+### La dependencia con GT-3/GT-4 que no se puede ocultar
+
+`operaciones` consume el contrato de CON-1 (`evt-trabajo-{región}`, discriminado por `type`). Hoy Gestión de Trabajos **todavía publica en los tópicos viejos** (`evt-trabajo-creado` / `evt-trabajo-estado`, ver la nota de CON-1 arriba): GT-3 es lo que los unifica, y no está hecho. Es exactamente la misma situación que dejó documentada la nota de verificación de EMP-3 (`docs/03-tareas.md` §5).
+
+**Consecuencia para las herramientas de esta entrega:**
+
+- `herramientas/generador_carga.py` soporta tres caminos: `--via-http` (contra la API real de GT, mide su disponibilidad), `--topico cmd-trabajo-*` (el camino que describe el plan técnico §9, sin efecto hasta GT-4) y `--topico evt-trabajo-*` (publica el evento de integración directo, bypaseando GT — el mismo atajo de EMP-3).
+- `escenarios/escenario-6.sh` corre los dos primeros caminos **en paralelo**: HTTP contra GT real para CA-6.1/CA-6.2, y publicación sintética en `evt-trabajo-{región}` para CA-6.3…CA-6.6. Cuando GT-3/GT-4 aterricen, el camino sintético sobra y el script se simplifica a un solo generador.
+
+Esto no es una desviación silenciosa del plan: queda anotado en la cabecera del script y aquí, para que nadie lo confunda con que Operaciones "ya está integrado end-to-end".
+
+### Por qué la idempotencia vive en el comando, no en la capa anticorrupción
+
+`AbrirSeguimiento` y `RegistrarCambioEstado` comparten la misma tabla `eventos_procesados`, pero cada uno decide por sí solo si el evento ya se aplicó — no hay un `if` centralizado en `consumidores.py` que decida cuál handler invocar dos veces. La razón: la deduplicación por `evento_id` (reentrega exacta del mismo mensaje) y la deduplicación por `trabajo_id` (un `TrabajoCreado` repetido con `evento_id` distinto) son reglas de negocio de cada comando, no un detalle de transporte. Consecuencia verificada en las pruebas: una reentrega exacta **no** inserta una segunda fila en `eventos_procesados` (su clave primaria ya existe), así que el conteo por `resultado=DUPLICADO` solo crece con la segunda forma de duplicado, no con la primera — las dos sostienen el mismo criterio (CA-6.4), medidas de maneras distintas.
+
+### Huérfano, no descartado (corrige G-2)
+
+`RegistrarCambioEstado` sobre un `trabajo_id` sin seguimiento no lanza ni descarta: registra `HUERFANO` en `eventos_procesados` y confirma el mensaje igual. Es la corrección directa de la brecha G-2 (`docs/01-especificacion.md` §3): con el stream unificado y `trabajo_id` como clave esto no debería ocurrir en operación normal, pero **el consumidor no confía en que el orden dentro de la partición sea perfecto** — lo deja contable en vez de asumirlo.
+
+### Verificación ejecutada
+
+Este entorno de desarrollo no tenía Python 3.11 ni acceso a Docker; se instaló un intérprete 3.11.16 aislado con `uv` para no relajar el target de versión del Dockerfile (`python:3.11-slim`).
+
+| Comprobación | Resultado |
+|---|---|
+| `pytest` de `operaciones` (Python 3.11.16) | **20 / 20** — dominio, comandos (aplicado/duplicado/huérfano/orden), capa anticorrupción con eventos sintéticos, API |
+| Regresión de los otros tres servicios con el mismo intérprete | `gestion_trabajos` 9/9 · `emparejamiento` 16/16 · `acreditacion` 19/19 — sin cambios de comportamiento |
+| `docker-compose.yml` con `postgres-operaciones` + `operaciones` + `operaciones-consumidor` | YAML válido, servicios y volumen nuevos verificados por `python3 -c "yaml.safe_load(...)"` |
+| `escenarios/escenario-6.sh` | `bash -n` (sintaxis) — **no** se corrió contra un clúster real: no hay Docker disponible en este entorno. Pendiente antes de la corrida formal |
+| `herramientas/generador_carga.py` | Importa y corre en modo `--via-http` contra un puerto cerrado: reporta la falla de conexión correctamente (`FALLA`, código de salida 1) |
+| `postman/hogar-alpes.postman_collection.json` | JSON válido tras la reestructuración; **no** se corrió con `newman` (requiere el sistema completo arriba) |
+
+**Pendiente antes de la corrida formal de ESC-6** (a cargo de quien tenga Docker a mano): `docker compose up -d`, correr `escenarios/escenario-6.sh` de punta a punta y confirmar los seis criterios de aceptación contra el clúster real.
