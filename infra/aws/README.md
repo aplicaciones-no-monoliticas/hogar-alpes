@@ -13,7 +13,34 @@ distinto.
 - **Pulsar gestionado** (p. ej. StreamNative) contradice el ítem de la
   rúbrica: el clúster lo debe configurar y desplegar el equipo (RNF-2).
 
-## 1. Lanzar la instancia
+## 1. Lanzar la instancia — con Terraform (recomendado)
+
+`infra/aws/terraform/` es el mismo despliegue como código: un
+`aws_security_group` (solo lo que §2 pide) y un `aws_instance` con
+`user-data.sh` como aprovisionamiento. Sin *key pair*: el arranque no necesita
+SSH, todo lo hace `user-data.sh` solo.
+
+```bash
+cd infra/aws/terraform
+terraform init
+terraform plan -var="ssh_cidr=<TU-IP>/32" -out=tfplan
+terraform apply "tfplan"
+
+# ... usar el sistema ...
+
+terraform destroy -var="ssh_cidr=<TU-IP>/32"   # tira todo abajo, limpio
+```
+
+`terraform output urls` imprime las cuatro URL de `/health` con la IP real.
+El estado (`terraform.tfstate`) y el plan (`tfplan`) quedan **fuera de git**
+(`infra/aws/terraform/.gitignore`) — llevan la IP real y son locales de quien
+despliega, no del repositorio.
+
+**`ssh_cidr` por defecto es obligatorio pasarlo** (sin default): dueño y
+compañeros deben decidir a propósito quién entra por 22, no heredar un valor
+que alguien más puso.
+
+### Alternativa manual (sin Terraform)
 
 | Aspecto | Valor |
 |---|---|
@@ -66,6 +93,9 @@ se usa**:
 # Detener sin perder los datos (los volúmenes persisten)
 docker compose stop
 # O, desde la consola de AWS: Stop instance (no Terminate)
+
+# Con Terraform: tirar TODO abajo (instancia + security group), limpio
+cd infra/aws/terraform && terraform destroy -var="ssh_cidr=<TU-IP>/32"
 ```
 
 ## 6. Sin secretos en el repositorio (RNF-6)
