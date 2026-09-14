@@ -1,212 +1,165 @@
-# Hogar de los Alpes — Servicio Gestión de Trabajos
+# Hogar de los Alpes
 
-Implementación de referencia de la **Entrega 3** (MISW4406 · Diseño y Construcción de
-Soluciones No Monolíticas). Es uno de los nueve micro-servicios de la arquitectura
-objetivo diseñada en las entregas 1 y 2, construido con DDD y una arquitectura de
-micro-servicios basada en eventos.
+Entrega 4 (MISW4406 · Diseño y Construcción de Soluciones No Monolíticas):
+**cuatro microservicios** que se comunican exclusivamente por comandos y
+eventos sobre **Apache Pulsar**, cada uno con su propia base de datos.
 
-Se eligió **Gestión de Trabajos** porque es el artefacto declarado en los escenarios de
-calidad 1, 2, 3 y 7: la implementación queda trazada contra lo ya documentado.
+La justificación arquitectónica completa está en `docs/`:
+[`01-especificacion.md`](docs/01-especificacion.md) (qué se construye y cómo
+se verifica), [`02-plan-tecnico.md`](docs/02-plan-tecnico.md) (cómo, técnico)
+y [`decisiones.md`](docs/decisiones.md) (lo que cambió durante la
+implementación y por qué).
 
 ---
 
-## Escenarios de calidad que este código prepara
+## Los cuatro servicios
 
-| # | Atributo | Escenario | Dónde se ve en el código |
+| Servicio | Contexto acotado | Persistencia | Puerto (local) |
 |---|---|---|---|
-| 1 | Modificabilidad | Reemplazar el adaptador de persistencia sin tocar el dominio | El puerto `dominio/repositorios.py` y el adaptador `infraestructura/repositorios.py`. Migrar de motor = otra clase que implemente el puerto |
-| 2 | Modificabilidad | Reglas de un país nuevo sin redesplegar el servicio | `infraestructura/reglas_regionales.py` + `reglas_regionales.json`. El dominio nunca sabe en qué país corre |
-| 3 | Modificabilidad | Agregar un estado al ciclo de vida sin afectar a otros servicios | `dominio/objetos_valor.py` — el grafo `TRANSICIONES`. `EN_VERIFICACION` ya está ahí como prueba |
-| 7 | Escalabilidad | Absorber un pico ×4 sin rechazar solicitudes | `POST /trabajos` responde `202`; el consumidor de `cmd-trabajo` drena a su ritmo |
+| `gestion_trabajos` | Gestión de Trabajos — el núcleo | CRUD PostgreSQL | 8000 |
+| `operaciones` | Operaciones y Calidad — reactor puro | CRUD PostgreSQL | 8001 |
+| `acreditacion` | Acreditación — subdominio núcleo | **Event Sourcing** PostgreSQL | 8002 |
+| `emparejamiento` | Emparejamiento y Publicación | CRUD (proyección + escritura) PostgreSQL | 8003 |
 
----
-
-## Arquitectura
-
-Hexagonal, tres capas, con la flecha de dependencia siempre hacia adentro:
-
-```
-        ADAPTADORES DE ENTRADA                    ADAPTADORES DE SALIDA
-   ┌──────────────────────────┐            ┌──────────────────────────────┐
-   │ api/trabajos.py   (HTTP) │            │ repositorios.py   PostgreSQL │
-   │ consumidores.py   Pulsar │            │ despachadores.py  Pulsar     │
-   └────────────┬─────────────┘            │ reglas_regionales.py sidecar │
-                │                          └───────────────▲──────────────┘
-                ▼                                          │  implementan
-        ┌───────────────────────────────────────────┐      │
-        │ APLICACIÓN — comandos · queries · DTOs    │      │
-        ├───────────────────────────────────────────┤      │
-        │ DOMINIO — agregaciones, objetos valor,    │──────┘
-        │ eventos, reglas, fábricas, PUERTOS        │   (inversión de dependencias)
-        └───────────────────────────────────────────┘
-```
-
-El **dominio no importa nada de infraestructura**. Las pruebas de `tests/test_dominio_trabajo.py`
-corren sin base de datos ni broker: si algún día necesitaran levantar Postgres, el
-aislamiento estaría roto.
-
-### Los dos módulos y cómo se hablan
+Cada uno vive en `servicios/<nombre>/`, es autocontenido (su Dockerfile, sus
+dependencias, su seedwork copiado — decisión `TO-7`) y arranca como **dos
+procesos** de la misma imagen: `api` (HTTP, gunicorn) y `consumidor` (Pulsar).
+Eso es lo que permite escalar consumidores sin tocar el puerto HTTP
+(escenario 8) y detener un reactor sin tumbar su API (escenario 6).
 
 ```
-  módulo TRABAJOS                                  módulo OPERACIONES
-  ───────────────                                  ──────────────────
-  Trabajo (agregación raíz)                        SeguimientoOperativo (agregación raíz)
-  └─ SubTrabajo (entidad interna)
-                    │
-                    │  TrabajoCreado / EstadoTrabajoCambiado
-                    │  (evento de DOMINIO, en proceso)
-                    └──────────────────────────────────►  abre el seguimiento
-                                                          y aplica su política de SLA
+                         Apache Pulsar (clúster propio)
+        cmd-trabajo-*         evt-trabajo-*        evt-acreditacion
+             │                  │    │                    │
+             ▼                  ▼    ▼                    ▼
+  ┌────────────────┐   ┌─────────────┐   ┌──────────────┐   ┌───────────────┐
+  │ gestion_trabajos│──▶│ operaciones │   │ acreditacion │──▶│ emparejamiento│
+  │  (CRUD)         │   │  (CRUD)     │   │ (Event Src.) │   │  (proyección) │
+  └────────────────┘   └─────────────┘   └──────────────┘   └───────────────┘
 ```
 
-`operaciones` **no importa una sola línea de `trabajos`**. Se suscribe a la señal
-`TrabajoCreadoDominio` que emite la Unidad de Trabajo y lee el evento por atributos.
-Consecuencia: agregar un estado nuevo al ciclo de vida no lo rompe.
-
-### Eventos: quién sale cuándo
-
-La Unidad de Trabajo (`seedwork/infraestructura/uow.py`) decide el momento:
-
-| Tipo | Cuándo | A dónde | Versionado |
-|---|---|---|---|
-| **Dominio** | antes del commit | en proceso, entre módulos | no |
-| **Integración** | después del commit | tópico `evt-trabajo` del broker | sí, `schema/v1` |
-
-El orden no es un detalle: un evento de integración afirma un hecho hacia afuera. Si
-saliera antes del commit y la transacción fallara, se habría anunciado algo que nunca
-ocurrió.
-
-### CQS
-
-| | Escritura | Lectura |
-|---|---|---|
-| Objeto | `Comando` | `Query` |
-| Despacho | `ejecutar_comando` (`singledispatch`) | `ejecutar_query` |
-| Devuelve | nada — solo el id | datos |
-| Ruta HTTP | `POST /trabajos` → `202` | `GET /trabajos/<id>` → `200` |
-
----
-
-## Estructura del proyecto
-
-```
-src/gestion_trabajos/
-├── seedwork/                  copia versionada, NO biblioteca compartida (PS-8 / TO-7)
-│   ├── dominio/               Entidad · AgregacionRaiz · ObjetoValor · EventoDominio
-│   │                          ReglaNegocio · Repositorio · Fabrica · Mapeador
-│   ├── aplicacion/            Comando · Query · handlers · dispatchers CQS
-│   └── infraestructura/       UnidadDeTrabajo · Despachador · esquema CloudEvents
-├── modulos/
-│   ├── trabajos/              MÓDULO 1 — el núcleo
-│   │   ├── dominio/           Trabajo, SubTrabajo, EstadoTrabajo, reglas, PUERTOS
-│   │   ├── aplicacion/        comandos/ · queries/ · mapeadores · handlers
-│   │   └── infraestructura/   repositorio Postgres · sidecar regional · Avro v1
-│   └── operaciones/           MÓDULO 2 — reacciona por eventos de dominio
-├── api/                       adaptador HTTP
-└── config/                    db · broker · binding de la UoW
-```
-
-El **seedwork es una copia de este servicio**, no una biblioteca compartida. Es la
-decisión `TO-7` de la Entrega 2: se acepta duplicar para no reintroducir acoplamiento en
-tiempo de compilación entre los nueve servicios.
+Ningún servicio le habla a otro por HTTP (RNF-1): cada red Docker conecta un
+servicio solo con el broker y con **su propia** base de datos (`docker-compose.yml`,
+INF-5/CA-T1).
 
 ---
 
 ## Cómo levantarlo
 
+Requiere Docker y el plugin de Compose. Desde un clon limpio:
+
 ```bash
-docker compose up --build
+cp .env.example .env      # opcional: todas las variables tienen valor por defecto
+docker compose up -d --build
 ```
 
-Levanta PostgreSQL, Apache Pulsar (standalone) y el servicio en `http://localhost:8000`.
-
-El contenedor escucha en el 5000 y se publica en el **8000** del host: en macOS el puerto
-5000 lo ocupa AirPlay Receiver. Para cambiarlo: `PUERTO_HTTP=9000 docker compose up`.
-
-### Local, sin Docker
+Esto levanta, en orden: ZooKeeper, dos *bookies* y dos *brokers* de Pulsar,
+`pulsar-config` (crea tenant/namespaces/tópicos/suscripciones, idempotente),
+las cuatro bases de datos y los ocho procesos de servicio (api + consumidor ×
+4). La primera vez tarda unos minutos en construir las imágenes.
 
 ```bash
-python3.11 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-docker compose up -d postgres pulsar
+docker compose ps                 # todo en `healthy` o `running`
+curl localhost:8000/health        # gestion-trabajos
+curl localhost:8001/health        # operaciones
+curl localhost:8002/health        # acreditacion
+curl localhost:8003/health        # emparejamiento
+```
 
-export PYTHONPATH=src
-export DATABASE_URI=postgresql+psycopg2://hogaralpes:hogaralpes@localhost:5432/gestion_trabajos
-export FLASK_APP=gestion_trabajos
-flask run
+Para agregar una región en caliente (CA-8.4):
+
+```bash
+docker compose run --rm pulsar-config bash /infra/agregar-region.sh conosur
+docker compose --profile conosur up -d emparejamiento-conosur
 ```
 
 ### Pruebas
 
+Cada servicio tiene su propia suite, sin depender de un broker real (los
+`tests/conftest.py` reemplazan la publicación por un no-op):
+
 ```bash
-pytest
+for s in gestion_trabajos operaciones acreditacion emparejamiento; do
+  (cd servicios/$s && pip install -r requirements.txt -q && pytest -q)
+done
+```
+
+### Postman
+
+`postman/hogar-alpes.postman_collection.json` + entornos `local`
+(`hogar-alpes.postman_environment.json`) y `aws`
+(`hogar-alpes-aws.postman_environment.json`):
+
+```bash
+npx newman run postman/hogar-alpes.postman_collection.json \
+  -e postman/hogar-alpes.postman_environment.json
 ```
 
 ---
 
-### Colección de Postman
+## Escenarios de calidad — un comando por escenario (RNF-8)
 
-`postman/` trae la colección y el entorno listos para importar. Cubre los escenarios
-implementados con aserciones, no solo peticiones sueltas:
+Cada script imprime **PASA/FALLA por criterio de aceptación** y guarda su
+salida en `docs/resultados/`.
 
-| Carpeta | Qué demuestra |
-|---|---|
-| `0 · Salud del servicio` | El servicio responde |
-| `Escenario 7 · Escalabilidad` | `202 Accepted` y **verifica que la respuesta baje de 500 ms**, que es la medida del escenario |
-| `Eventos de dominio entre módulos` | Que `operaciones` abrió su seguimiento sin importar nada de `trabajos` |
-| `Escenario 3 · Ciclo de vida` | Transición válida, transición inválida (`409`) y el estado nuevo `EN_VERIFICACION` |
-| `Escenario 2 · Reglas regionales` | El mismo payload pasa en CO y se rechaza en MX; y `PE` cae al contrato por defecto |
-| `Validaciones del dominio` | Ubicación incompleta (`400`) y trabajo inexistente (`404`) |
-
-Las carpetas están ordenadas para correrse de arriba abajo: la primera guarda el id del
-trabajo en la variable `trabajoId` y las siguientes lo reutilizan.
-
-Desde la línea de comandos:
-
-```bash
-npx newman run postman/hogar-alpes.postman_collection.json
-```
-
-Última corrida verificada: **18 peticiones, 36 aserciones, 0 fallos.**
-
-## API
-
-| Verbo | Ruta | Qué hace |
+| Escenario | Script | Qué demuestra |
 |---|---|---|
-| `POST` | `/trabajos` | Comando `CrearTrabajo`. Responde **`202 Accepted`** |
-| `GET` | `/trabajos/<id>` | Consulta `ObtenerTrabajo` |
-| `GET` | `/trabajos?estado=CREADO` | Consulta `ObtenerTrabajosPorEstado` |
-| `PUT` | `/trabajos/<id>/estado` | Comando `CambiarEstadoTrabajo` |
-| `GET` | `/trabajos/<id>/seguimiento` | Lee el módulo `operaciones` — prueba de que el evento de dominio cruzó |
-| `GET` | `/health` | Estado del servicio |
+| **6** · Disponibilidad | `escenarios/escenario-6.sh` | El reactor de Operaciones cae ≥ 30 min: Gestión de Trabajos no se entera, el backlog se retiene y se drena al 100% |
+| **8** · Escalabilidad | `escenarios/escenario-8.sh` | Throughput ~lineal 1→2 réplicas, región nueva sin interrumpir las activas, consulta < 1 s con ≥ 100.000 proveedores |
+| **MOD-1** | `escenarios/mod-1.sh` | Reemplazar el adaptador de persistencia de Gestión de Trabajos por configuración, sin tocar `dominio/` ni `aplicacion/` |
+| **MOD-2** | `escenarios/mod-2.sh` | País nuevo por el sidecar de reglas regionales, sin reconstruir la imagen |
+| **MOD-3** | `escenarios/mod-3.sh` | Estado nuevo en el ciclo de vida: se redespliega solo Gestión de Trabajos, Operaciones y Emparejamiento ni se reinician |
+| Esquemas | `escenarios/esquemas.py` | CA-E1 (campo opcional aceptado) y CA-E2 (cambio incompatible rechazado) contra el Schema Registry de Pulsar |
 
-### Recorrido de demostración
+Herramientas de apoyo, en `herramientas/`: `generador_carga.py` (publica
+trabajos a una tasa/tiempo dados), `medir_latencia.py` (p50/p95/p99),
+`cargar_acreditaciones.py` (100.000 acreditaciones), `verificar_contratos.py`
+y `spike_esquemas.py` (los instrumentos de INF-0 y CON-1).
 
-```bash
-# 1. Crear un trabajo de siniestro. Responde 202 con el id.
-curl -s -X POST localhost:8000/trabajos -H 'Content-Type: application/json' -d '{
-  "canal": "B2B2C", "partner_id": "seguros-alpes", "referencia_externa": "SIN-99123",
-  "categoria": "SINIESTRO_GRANIZO", "urgencia": "CRITICA",
-  "pais": "CO", "ciudad": "Bogota", "direccion": "Cra 7 # 71-21",
-  "descripcion": "Granizada: techo perforado" }'
+**Estado de las corridas formales:** ver `docs/resultados/` y
+`docs/decisiones.md` — varios escenarios se escribieron y verificaron con
+`pytest`, pero su corrida de punta a punta contra un clúster real (o contra
+AWS, para DEP-2) puede seguir pendiente si no se ha ejecutado todavía en este
+entorno; el estado exacto por tarea está en `docs/03-tareas.md`.
 
-# 2. Leerlo (lado de consulta del CQS)
-curl -s localhost:8000/trabajos/<ID>
+---
 
-# 3. El módulo `operaciones` ya abrió su seguimiento con prioridad P1,
-#    solo porque recibió el evento de dominio. Nunca leyó la tabla de trabajos.
-curl -s localhost:8000/trabajos/<ID>/seguimiento
+## Topología de datos y esquemas
 
-# 4. Transición válida
-curl -s -X PUT localhost:8000/trabajos/<ID>/estado \
-  -H 'Content-Type: application/json' -d '{"estado":"EMPAREJANDO"}'
+- **Descentralizada**: una instancia de PostgreSQL por servicio (§7 de la
+  especificación), justificada contra los escenarios 6 y 8, no por dogma.
+- **Avro + Schema Registry de Pulsar**, `FULL_TRANSITIVE`. Todo campo se
+  declara `Tipo(default=None, required_default=True)` — sin eso el broker
+  rechaza cualquier evolución (hallazgo de INF-0, `docs/decisiones.md`).
+- Los contratos canónicos viven en `contratos/v1/`; cada servicio guarda su
+  propia copia del lado que usa (productor o consumidor) — decisión `TO-7`,
+  no una biblioteca compartida.
 
-# 5. Transición inválida -> 409, la rechaza el objeto valor EstadoTrabajo
-curl -s -X PUT localhost:8000/trabajos/<ID>/estado \
-  -H 'Content-Type: application/json' -d '{"estado":"COMPLETADO"}'
+---
 
-# 6. Categoría que no aplica en México -> 400, la rechaza el sidecar regional
-curl -s -X POST localhost:8000/trabajos -H 'Content-Type: application/json' -d '{
-  "categoria": "SINIESTRO_GRANIZO", "urgencia": "ALTA",
-  "pais": "MX", "ciudad": "CDMX", "direccion": "Reforma 100" }'
+## Estructura del repositorio
+
 ```
+hogar-alpes/
+├── servicios/            gestion_trabajos · operaciones · acreditacion · emparejamiento
+│   └── _plantilla/       la carpeta que se copia para levantar un servicio nuevo
+├── contratos/v1/          esquemas Avro canónicos (CON-1)
+├── infra/
+│   ├── pulsar/            inicializar.sh · agregar-region.sh · topologia.env
+│   ├── sidecar/            reglas_regionales.json — el volumen de MOD-2
+│   └── aws/                user-data.sh · README.md del despliegue (DEP-1)
+├── escenarios/             un script por escenario (RNF-8)
+├── herramientas/           generador de carga, medición, carga masiva, verificación
+├── postman/                colección + entornos local/aws
+├── docs/                   especificación · plan técnico · tareas · decisiones · resultados
+├── docker-compose.yml
+└── .env.example
+```
+
+---
+
+## Documento de actividades
+
+`docs/actividades.md` enlaza cada tarea de `docs/03-tareas.md` con los
+commits y PR que la implementaron, por integrante (requisito de la rúbrica:
+contribuciones equitativas y verificables).
