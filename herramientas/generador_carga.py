@@ -6,34 +6,31 @@ escenarios 6 y 8.
 
 Tres modos, elegidos por lo que se le pase:
 
-  - `--via-http <url-base>` — el camino real hoy: `POST /trabajos` contra
-    Gestión de Trabajos (GT-1, GT-2 ya están hechos). Mide la disponibilidad
-    de GT (CA-6.1, CA-6.2) tal como lo vería un cliente externo.
-  - `--topico cmd-trabajo-...` (por defecto, según el plan técnico §9) —
-    publica `ComandoCrearTrabajo` directo al tópico de comandos. **Sin efecto
-    todavía**: GT-4 (consumidor `cmd-trabajo-.*`) no está hecho, así que hoy
-    nadie lee ese tópico. Queda listo para cuando GT-4 aterrice.
-  - `--topico evt-trabajo-...` — publica `EventoTrabajo` (`TrabajoCreado`, y
-    con `--con-cambios-estado` un `EstadoTrabajoCambiado` después) DIRECTO al
-    stream de integración, sin pasar por GT. Es el mismo atajo que usó EMP-3
-    (`docs/03-tareas.md` §5, nota de verificación): hasta que GT-3 unifique
-    los tópicos (G-2), es la única manera de ejercitar el consumidor de
-    Operaciones con el contrato real. `escenarios/escenario-6.sh` combina
-    `--via-http` (para CA-6.1/6.2, el lado de GT) con este modo (para
-    CA-6.3…6.6, el lado de Operaciones) — ver la nota al principio de ese
-    script.
+  - `--via-http <url-base>` — el camino real: `POST /trabajos` contra
+    Gestión de Trabajos. Desde GT-3, GT publica el `TrabajoCreado` real en
+    `evt-trabajo-{región}`, así que este modo ya alimenta a Operaciones y
+    Emparejamiento de punta a punta, no solo mide la disponibilidad de GT
+    (CA-6.1, CA-6.2). Con `--con-cambios-estado`, además hace
+    `PUT /trabajos/{id}/estado` por cada trabajo creado (`EMPAREJANDO`): es
+    lo que ejercita `EstadoTrabajoCambiado` para CA-6.5 sin tocar Pulsar.
+  - `--topico cmd-trabajo-...` (según el plan técnico §9) — publica
+    `ComandoCrearTrabajo` directo al tópico de comandos, que GT-4 consume por
+    patrón (Shared). Alternativa a `--via-http` cuando se quiere ejercitar el
+    camino asíncrono de creación en vez del síncrono.
+  - `--topico evt-trabajo-...` — publica `EventoTrabajo` DIRECTO al stream de
+    integración, sin pasar por GT. Es el atajo que usó `escenario-8.sh` para
+    precargar un backlog de drenaje (no necesita que exista un `Trabajo` real
+    en la base de GT, solo el evento) y el que usó `escenario-6.sh` mientras
+    GT-3 no estaba — ya no hace falta para el escenario 6 (`docs/decisiones.md`,
+    sección GT-3), pero sigue siendo el modo correcto para backlogs sintéticos.
 
 Reutiliza un solo cliente y un solo productor para todo el proceso (RNF-4).
 
 Uso:
-    # Carga sostenida: 500 trabajos a 20/s, vía HTTP contra GT
+    # Carga sostenida: 500 trabajos a 20/s, vía HTTP contra GT — con GT-3,
+    # esto ya llega de punta a punta a Operaciones y Emparejamiento.
     python herramientas/generador_carga.py --via-http http://localhost:8000 \\
-        --total 500 --tasa 20
-
-    # Backlog sintético para el escenario 6 (bypass de GT, ver arriba)
-    python herramientas/generador_carga.py \\
-        --topico persistent://hogar-alpes/trabajos/evt-trabajo-andina \\
-        --total 500 --con-cambios-estado
+        --total 500 --tasa 20 --con-cambios-estado
 
     # Backlog sintético para el escenario 8 (lo usa escenarios/escenario-8.sh)
     python herramientas/generador_carga.py \\
@@ -125,22 +122,42 @@ def _publicar_via_evento(productor, trabajo_id, pais, con_cambios_estado):
     )
 
 
-def _publicar_via_http(base_url, pais, timeout):
-    datos = _datos_trabajo(pais)
+def _http(url, metodo, cuerpo, timeout):
     peticion = urllib.request.Request(
-        f'{base_url.rstrip("/")}/trabajos',
-        data=json.dumps(datos).encode('utf-8'),
-        headers={'Content-Type': 'application/json'},
-        method='POST',
+        url,
+        data=json.dumps(cuerpo).encode('utf-8') if cuerpo is not None else None,
+        headers={'Content-Type': 'application/json'} if cuerpo is not None else {},
+        method=metodo,
     )
     try:
         with urllib.request.urlopen(peticion, timeout=timeout) as resp:
-            resp.read()
-            return resp.status < 300
+            cuerpo_resp = resp.read()
+            return resp.status < 300, cuerpo_resp
     except urllib.error.HTTPError as e:
-        return e.code < 300
+        return e.code < 300, e.read()
+    except Exception:
+        return False, b''
+
+
+def _publicar_via_http(base_url, pais, timeout, con_cambios_estado):
+    datos = _datos_trabajo(pais)
+    ok, cuerpo_resp = _http(f'{base_url.rstrip("/")}/trabajos', 'POST', datos, timeout)
+    if not ok or not con_cambios_estado:
+        return ok
+
+    # EMPAREJANDO es una transición válida desde CREADO (dominio/objetos_valor.py):
+    # ejercita EstadoTrabajoCambiado para CA-6.5 sin tocar Pulsar directamente.
+    try:
+        trabajo_id = json.loads(cuerpo_resp).get('id', '')
     except Exception:
         return False
+    if not trabajo_id:
+        return False
+    ok_estado, _ = _http(
+        f'{base_url.rstrip("/")}/trabajos/{trabajo_id}/estado', 'PUT',
+        {'estado': 'EMPAREJANDO'}, timeout,
+    )
+    return ok_estado
 
 
 def main():
@@ -158,7 +175,8 @@ def main():
                          help='tópico Pulsar; cmd-trabajo-* publica el comando, '
                               'evt-trabajo-* publica el evento de integración directo (bypass de GT)')
     parser.add_argument('--con-cambios-estado', action='store_true',
-                         help='(solo evt-trabajo-*) también publica un EstadoTrabajoCambiado por trabajo')
+                         help='también genera un cambio de estado por trabajo '
+                              '(PUT /estado en --via-http, EstadoTrabajoCambiado en evt-trabajo-*)')
     parser.add_argument('--broker', default=os.getenv('BROKER_URL', 'pulsar://localhost:6650'))
     parser.add_argument('--listener', default=os.getenv('BROKER_LISTENER', 'external'))
     parser.add_argument('--paises', default=','.join(PAISES_CIUDADES),
@@ -184,7 +202,9 @@ def main():
         for i in range(args.total):
             if limite_tiempo and time.time() >= limite_tiempo:
                 break
-            ok = _publicar_via_http(args.via_http, random.choice(paises), args.timeout_http)
+            ok = _publicar_via_http(
+                args.via_http, random.choice(paises), args.timeout_http, args.con_cambios_estado,
+            )
             if not ok:
                 errores += 1
             if (i + 1) % args.progreso_cada == 0:
