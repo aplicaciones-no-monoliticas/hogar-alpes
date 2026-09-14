@@ -1,8 +1,11 @@
 """Implementación de la Unidad de Trabajo sobre la sesión de SQLAlchemy.
 
 Se guarda en `flask.g`, de modo que todos los handlers que participan en un
-mismo request comparten la misma transacción: el comando de `trabajos` y el
-handler de `operaciones` hacen commit juntos o no hacen ninguno.
+mismo request comparten la misma transacción. Antes de GT-5, el comando de
+`trabajos` y el handler del módulo `operaciones` en proceso hacían commit
+juntos; con `operaciones` ya extraído a su propio servicio, hoy solo hay un
+módulo en este servicio, pero la Unidad de Trabajo queda igual de necesaria
+para que `trabajos` y sus futuros módulos compartan transacción.
 """
 from flask import g, has_app_context
 
