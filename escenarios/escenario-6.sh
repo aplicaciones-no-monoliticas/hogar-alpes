@@ -77,9 +77,22 @@ compose() {
 }
 
 backlog_suscripcion() {
-  # $1 = tópico completo con partición; $2 = suscripción
-  compose exec -T broker-1 bin/pulsar-admin topics stats-internal "$1" 2>/dev/null \
-    | grep -A 2 "\"$2\"" | grep -o '"msgBacklog"[^,]*' | grep -o '[0-9]\+' | head -1
+  # $1 = tópico PARTICIONADO, sin sufijo -partition-N; $2 = suscripción.
+  # `partitioned-stats` agrega el backlog de las 4 particiones. La versión
+  # anterior leía solo la partición 0 (`stats-internal ...-partition-0`): con
+  # trabajo_id como clave, GT reparte entre las 4, así que "drenó" se
+  # declaraba en cuanto la partición 0 vaciaba, aunque 1-3 siguieran con
+  # backlog — el conteo final de CA-6.4 quedaba corto sin que el fallo fuera
+  # evidente (parecía un problema de HTTP, no del propio script).
+  compose exec -T broker-1 bin/pulsar-admin topics partitioned-stats "$1" 2>/dev/null \
+    | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('subscriptions', {}).get('$2', {}).get('msgBacklog', 0))
+except Exception:
+    print(0)
+"
 }
 
 # Extrae p95 (ms) y el número de peticiones fallidas de la salida de
@@ -125,12 +138,28 @@ resultado "## 2. Detener el consumidor de Operaciones"
 compose stop "$SERVICIO_OPS_CONSUMIDOR" >>"$SALIDA" 2>&1
 resultado "  $SERVICIO_OPS_CONSUMIDOR detenido"
 
+# CA-6.4 compara contra lo creado EN ESTA corrida, no contra el total
+# histórico de la base de Operaciones — sin este corte, una segunda corrida
+# (o cualquier POST /trabajos suelto de una demo anterior) infla el conteo y
+# el criterio falla aunque la corrida actual haya sido perfecta.
+INICIO_UTC="$(date -u +%Y-%m-%dT%H:%M:%S)"
+
 resultado ""
 resultado "## 3. Carga durante ${T} min (N=$N trabajos + cambios de estado), vía HTTP contra GT real"
+
+# CO -> andina, MX -> norteamerica (config/topicos.py de GT): son las dos
+# regiones que infra/pulsar/inicializar.sh crea por defecto. BR y AR caen en
+# 'conosur', que solo existe si se corrió agregar-region.sh conosur —de otro
+# modo el despachador de GT falla en silencio (TopicNotFound, G-3b: riesgo
+# aceptado, no reintenta) y esos trabajos nunca llegan a Operaciones, aunque
+# el POST haya respondido 202. Generar carga con las 4 nacionalidades por
+# defecto infla N sin que la mitad de los trabajos pueda cumplirlo jamás.
+PAISES="${PAISES:-CO,MX}"
 
 inicio_carga=$(date +%s)
 python3 "$RAIZ/herramientas/generador_carga.py" --via-http "$URL_GT" \
   --total "$N" --duracion "$((T * 60))" --con-cambios-estado --progreso-cada 100 \
+  --paises "$PAISES" \
   >>"$SALIDA" 2>&1
 rc_carga=$?
 duracion_carga=$(( $(date +%s) - inicio_carga ))
@@ -159,12 +188,12 @@ else
   criterio CA-6.2 1 "p95 durante=${p95_durante}ms — no cumplió el umbral (base=${p95_base}ms)"
 fi
 
-backlog_ops=$(backlog_suscripcion "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION-partition-0" "operaciones")
+backlog_ops=$(backlog_suscripcion "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION" "operaciones")
 backlog_ops="${backlog_ops:-0}"
-resultado "  backlog de la suscripción 'operaciones' (partición 0): $backlog_ops"
+resultado "  backlog de la suscripción 'operaciones' (las 4 particiones): $backlog_ops"
 criterio CA-6.3 0 "backlog creciendo en 'operaciones' mientras el consumidor está detenido (ver valor arriba)"
 
-backlog_emp=$(backlog_suscripcion "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION-partition-0" "emparejamiento-$REGION")
+backlog_emp=$(backlog_suscripcion "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION" "emparejamiento-$REGION")
 backlog_emp="${backlog_emp:-0}"
 if [ "$backlog_emp" -le 5 ] 2>/dev/null; then
   criterio CA-6.6 0 "backlog de 'emparejamiento-$REGION' ≈ 0 ($backlog_emp) — las suscripciones están aisladas"
@@ -182,7 +211,7 @@ backlog=999999
 limite=$(( $(date +%s) + 300 ))
 while [ "$backlog" -gt 0 ] 2>/dev/null && [ "$(date +%s)" -lt "$limite" ]; do
   sleep 2
-  backlog=$(backlog_suscripcion "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION-partition-0" "operaciones")
+  backlog=$(backlog_suscripcion "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION" "operaciones")
   backlog="${backlog:-0}"
 done
 duracion_drenaje=$(( $(date +%s) - inicio_drenaje ))
@@ -192,7 +221,7 @@ resultado "  drenado en ${duracion_drenaje}s · backlog final=$backlog"
 resultado ""
 resultado "## 6. Conteos finales (CA-6.4, CA-6.5)"
 
-total_seguimientos=$(curl -s "$URL_OPS/seguimientos/conteo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('total', -1))" 2>/dev/null || echo -1)
+total_seguimientos=$(curl -s "$URL_OPS/seguimientos/conteo?desde=$INICIO_UTC" | python3 -c "import json,sys; print(json.load(sys.stdin).get('total', -1))" 2>/dev/null || echo -1)
 huerfanos=$(curl -s "$URL_OPS/eventos-procesados/conteo?resultado=HUERFANO" | python3 -c "import json,sys; print(json.load(sys.stdin).get('total', -1))" 2>/dev/null || echo -1)
 
 resultado "  seguimientos creados: $total_seguimientos (N=$N) · huérfanos: $huerfanos · backlog final: $backlog"
