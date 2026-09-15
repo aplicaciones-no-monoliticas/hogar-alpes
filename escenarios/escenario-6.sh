@@ -119,6 +119,27 @@ resultado "# Escenario 6 · Disponibilidad — $FECHA"
 resultado ""
 resultado "Parámetros: N=$N · T=${T}min · REGION=$REGION"
 
+# ---------------------------------------------------------------- precondición
+resultado ""
+resultado "## 0. Verificar que 'operaciones' ya está al día antes de empezar"
+resultado "  (si quedó backlog sin drenar de una corrida anterior —de este script"
+resultado "  o de escenario-8.sh, que publica en el mismo tópico— esos eventos se"
+resultado "  procesarían DURANTE esta corrida y CA-6.4 contaría de más, sin que"
+resultado "  esta corrida haya hecho nada mal)"
+
+backlog_previo=$(backlog_suscripcion "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION" "operaciones")
+backlog_previo="${backlog_previo:-0}"
+if [ "$backlog_previo" -gt 0 ] 2>/dev/null; then
+  resultado "  backlog previo: $backlog_previo — esperando a que 'operaciones' lo drene…"
+  limite_previo=$(( $(date +%s) + 120 ))
+  while [ "$backlog_previo" -gt 0 ] 2>/dev/null && [ "$(date +%s)" -lt "$limite_previo" ]; do
+    sleep 2
+    backlog_previo=$(backlog_suscripcion "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION" "operaciones")
+    backlog_previo="${backlog_previo:-0}"
+  done
+fi
+resultado "  backlog al empezar: ${backlog_previo:-0} (0 = arranca limpio)"
+
 # ---------------------------------------------------------------- línea base
 resultado ""
 resultado "## 1. Línea base — con Operaciones arriba"
@@ -169,10 +190,21 @@ resultado "  carga generada en ${duracion_carga}s (rc=$rc_carga)"
 resultado ""
 resultado "## 4. Durante la caída (CA-6.1, CA-6.2, CA-6.3, CA-6.6)"
 
+# `medir_latencia.py --metodo POST` no es un GET de solo lectura: cada
+# petición es un POST /trabajos real, que crea un trabajo real — GT no tiene
+# un endpoint de eco. Esas $PETICIONES_LATENCIA peticiones (después de
+# INICIO_UTC) terminan como seguimientos reales en Operaciones igual que los
+# del generador de carga: sin sumarlas, CA-6.4 comparaba contra N pero el
+# sistema había creado, correctamente, N + PETICIONES_LATENCIA (se vio en una
+# corrida real: 300 + 50 = 350, no 300 — el sistema no tenía ningún defecto,
+# la cuenta del script estaba incompleta). La medición de línea base (paso 1)
+# no necesita este ajuste: ocurre ANTES de INICIO_UTC, así que ya queda fuera
+# del conteo.
+PETICIONES_LATENCIA=50
 DURANTE_LOG="$DIR_RESULTADOS/.escenario-6-durante-$FECHA.txt"
 python3 "$RAIZ/herramientas/medir_latencia.py" "$URL_GT/trabajos" --metodo POST \
   --cuerpo '{"categoria":"PLOMERIA","pais":"CO","ciudad":"Bogota","direccion":"Cra 7","urgencia":"NORMAL"}' \
-  --peticiones 50 --concurrencia 10 --umbral-p95-ms 500 \
+  --peticiones "$PETICIONES_LATENCIA" --concurrencia 10 --umbral-p95-ms 500 \
   >"$DURANTE_LOG" 2>&1
 cat "$DURANTE_LOG" | tee -a "$SALIDA" >/dev/null
 
@@ -224,12 +256,17 @@ resultado "## 6. Conteos finales (CA-6.4, CA-6.5)"
 total_seguimientos=$(curl -s "$URL_OPS/seguimientos/conteo?desde=$INICIO_UTC" | python3 -c "import json,sys; print(json.load(sys.stdin).get('total', -1))" 2>/dev/null || echo -1)
 huerfanos=$(curl -s "$URL_OPS/eventos-procesados/conteo?resultado=HUERFANO" | python3 -c "import json,sys; print(json.load(sys.stdin).get('total', -1))" 2>/dev/null || echo -1)
 
-resultado "  seguimientos creados: $total_seguimientos (N=$N) · huérfanos: $huerfanos · backlog final: $backlog"
+# El total esperado incluye los PETICIONES_LATENCIA trabajos reales que creó
+# la propia medición de latencia del paso 4 (ver el comentario ahí) — no son
+# parte de "N" conceptualmente, pero sí existen en el sistema y Operaciones
+# los procesó correctamente, así que el conteo real los incluye.
+esperado=$(( N + PETICIONES_LATENCIA ))
+resultado "  seguimientos creados: $total_seguimientos (N=$N + $PETICIONES_LATENCIA de la medición de latencia = $esperado) · huérfanos: $huerfanos · backlog final: $backlog"
 
-if [ "$total_seguimientos" = "$N" ] && [ "$backlog" = "0" ]; then
-  criterio CA-6.4 0 "seguimientos=$total_seguimientos=N, backlog=0, 0 duplicados (la creación es idempotente por trabajo_id)"
+if [ "$total_seguimientos" = "$esperado" ] && [ "$backlog" = "0" ]; then
+  criterio CA-6.4 0 "seguimientos=$total_seguimientos=N+$PETICIONES_LATENCIA, backlog=0, 0 duplicados (la creación es idempotente por trabajo_id)"
 else
-  criterio CA-6.4 1 "seguimientos=$total_seguimientos (esperado N=$N) · backlog=$backlog"
+  criterio CA-6.4 1 "seguimientos=$total_seguimientos (esperado $esperado = N($N)+$PETICIONES_LATENCIA) · backlog=$backlog"
 fi
 
 if [ "$huerfanos" = "0" ]; then
