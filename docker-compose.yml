@@ -162,6 +162,29 @@ services:
       PULSAR_ADMIN_URL: http://broker-1:8080
     command: bash /infra/inicializar.sh
 
+  # Panel visual de tópicos/suscripciones/backlog — solo para demostrar en
+  # vivo (sustentación, escenarios 6 y 8): NO forma parte del sistema en
+  # producción, por eso va detrás de un profile y `docker compose up -d` sin
+  # más no lo levanta. Arranque:
+  #   docker compose --profile demo up -d pulsar-manager
+  # Primer uso (una sola vez): infra/pulsar/pulsar-manager-setup.sh, luego
+  # entrar a http://localhost:9527 (o al puerto publicado en AWS) con las
+  # credenciales que imprime el script y agregar un entorno apuntando a
+  # http://broker-1:8080 (ver infra/pulsar/README.md).
+  pulsar-manager:
+    image: apachepulsar/pulsar-manager:v0.4.0
+    container_name: hda-pulsar-manager
+    profiles: [demo]
+    networks: [red-broker]
+    ports:
+      - "9527:9527"   # UI
+      - "7750:7750"   # API del backend — la usa pulsar-manager-setup.sh
+    depends_on:
+      broker-1:
+        condition: service_healthy
+    environment:
+      SPRING_CONFIGURATION_FILE: /pulsar-manager/pulsar-manager/application.properties
+
   # ------------------------------------------------- 1 · Gestión de Trabajos
   postgres-trabajos: &postgres
     image: postgres:16-alpine

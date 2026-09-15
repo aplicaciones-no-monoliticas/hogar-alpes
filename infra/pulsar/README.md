@@ -38,3 +38,17 @@ Regiones iniciales: `andina` y `norteamerica`. **`conosur` no se crea aquí**: s
 **La cuota de backlog desaloja, no retiene al productor.** Es la diferencia entre *«el consumidor se atrasó»* y *«el productor se bloqueó»*. Con la política que retiene al productor, una caída larga del reactor degradaría a Gestión de Trabajos: exactamente lo que el escenario prohíbe. El costo aceptado es perder eventos si la caída supera la ventana, un riesgo que la Entrega 3 declaró de forma explícita.
 
 Y una precisión que conviene tener a la mano en la sustentación: **la «ventana de retención» del escenario la fijan el TTL y la cuota, no la política que Pulsar llama `retention`**, que solo aplica a los mensajes ya confirmados.
+
+## Pulsar Manager — panel visual para la demo (opcional)
+
+`pulsar-admin` es exacto pero es texto; para la sustentación (mostrar en vivo el backlog de `operaciones` creciendo durante el escenario 6, o las particiones repartiéndose en el 8) ayuda un panel. **No es parte del sistema en producción** — vive detrás de un profile de Compose:
+
+```bash
+docker compose --profile demo up -d pulsar-manager
+infra/pulsar/pulsar-manager-setup.sh          # una sola vez: crea el usuario admin
+# imprime la clave y las instrucciones para agregar el entorno cluster-hda
+```
+
+Luego entra a `http://localhost:9527` (o al puerto publicado en AWS — ver `infra/aws/README.md`, variable `exponer_pulsar_manager`) con las credenciales que imprimió el script, y agrega manualmente un "New Environment" apuntando a `http://broker-1:8080` (Pulsar Manager no tiene una API pública para registrar entornos, es un paso de UI).
+
+Para apagarlo cuando termine la demo: `docker compose --profile demo stop pulsar-manager` (o `down` para quitarlo).
