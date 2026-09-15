@@ -85,7 +85,7 @@ resultado ""
 resultado "## a. Carga de acreditaciones (CA-8.1)"
 
 inicio_carga=$(date +%s)
-if python "$RAIZ/herramientas/cargar_acreditaciones.py" \
+if python3 "$RAIZ/herramientas/cargar_acreditaciones.py" \
     --total "$PROVEEDORES" --broker "$BROKER_URL" --listener "$BROKER_LISTENER" \
     >>"$SALIDA" 2>&1; then
   duracion_carga=$(( $(date +%s) - inicio_carga ))
@@ -105,7 +105,7 @@ sleep 10
 resultado ""
 resultado "## b. Latencia de \`GET /candidatos\` (CA-8.2: p95 < 1 s con >= 100.000 proveedores)"
 
-if python "$RAIZ/herramientas/medir_latencia.py" \
+if python3 "$RAIZ/herramientas/medir_latencia.py" \
     "$URL_EMPAREJAMIENTO/candidatos?categoria=PLOMERIA&pais=CO&ciudad=Bogota" \
     --peticiones 200 --concurrencia 20 --umbral-p95-ms 1000 \
     >>"$SALIDA" 2>&1; then
@@ -123,7 +123,7 @@ resultado "  el del consumidor, no el de la conexión (riesgo RT-4 del plan téc
 
 compose stop "$SERVICIO_EMP_CONSUMIDOR" >>"$SALIDA" 2>&1
 
-if python "$RAIZ/herramientas/generador_carga.py" \
+if python3 "$RAIZ/herramientas/generador_carga.py" \
     --topico "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION_BASE" \
     --total "$TRABAJOS" --broker "$BROKER_URL" --listener "$BROKER_LISTENER" \
     >>"$SALIDA" 2>&1; then
@@ -168,7 +168,7 @@ for k in $REPLICAS; do
 
   # Recarga el backlog para la siguiente k, con el consumidor detenido de nuevo.
   compose stop "$SERVICIO_EMP_CONSUMIDOR" >>"$SALIDA" 2>&1
-  python "$RAIZ/herramientas/generador_carga.py" \
+  python3 "$RAIZ/herramientas/generador_carga.py" \
     --topico "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION_BASE" \
     --total "$TRABAJOS" --broker "$BROKER_URL" --listener "$BROKER_LISTENER" \
     >>"$SALIDA" 2>&1
@@ -185,14 +185,14 @@ resultado "## d. Región en caliente (CA-8.4)"
 compose up -d --scale "$SERVICIO_EMP_CONSUMIDOR=2" "$SERVICIO_EMP_CONSUMIDOR" >>"$SALIDA" 2>&1
 sleep 3
 
-antes=$(python "$RAIZ/herramientas/medir_latencia.py" "$URL_ACREDITACION/health" \
+antes=$(python3 "$RAIZ/herramientas/medir_latencia.py" "$URL_ACREDITACION/health" \
   --peticiones 50 --concurrencia 10 2>&1 | tee -a "$SALIDA" | grep -c 'FALLA')
 
 PULSAR_ADMIN_URL="http://localhost:8080" bash "$RAIZ/infra/pulsar/agregar-region.sh" "$REGION_NUEVA" \
   >>"$SALIDA" 2>&1
 resultado_alta=$?
 
-despues=$(python "$RAIZ/herramientas/medir_latencia.py" "$URL_ACREDITACION/health" \
+despues=$(python3 "$RAIZ/herramientas/medir_latencia.py" "$URL_ACREDITACION/health" \
   --peticiones 50 --concurrencia 10 2>&1 | tee -a "$SALIDA" | grep -c 'FALLA')
 
 if [ "$resultado_alta" -eq 0 ] && [ "$antes" -eq 0 ] && [ "$despues" -eq 0 ]; then
