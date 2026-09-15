@@ -41,6 +41,20 @@ REGION_BASE="${REGION_BASE:-andina}"
 REGION_NUEVA="${REGION_NUEVA:-conosur}"
 REPLICAS="${REPLICAS:-1 2 4}"
 
+# La cabecera de este script documenta `--proveedores`/`--trabajos` (línea
+# 29) pero no existía ningún parseo de argumentos: se ignoraban en silencio y
+# la corrida "reducida para depurar" en realidad corría con los 100.000/2.000
+# de siempre.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --proveedores) PROVEEDORES="$2"; shift 2 ;;
+    --trabajos) TRABAJOS="$2"; shift 2 ;;
+    --region-base) REGION_BASE="$2"; shift 2 ;;
+    --region-nueva) REGION_NUEVA="$2"; shift 2 ;;
+    *) echo "argumento desconocido: $1" >&2; exit 2 ;;
+  esac
+done
+
 URL_ACREDITACION="${URL_ACREDITACION:-http://localhost:8002}"
 URL_EMPAREJAMIENTO="${URL_EMPAREJAMIENTO:-http://localhost:8003}"
 BROKER_URL="${BROKER_URL:-pulsar://localhost:6650}"
@@ -48,8 +62,15 @@ BROKER_LISTENER="${BROKER_LISTENER:-external}"
 
 # Nombres de servicio en docker-compose.yml (INT-1). Sobrescribibles: este
 # script no debe reescribirse solo porque INT-1 eligió otro nombre.
+#
+# El consumidor regional de Emparejamiento se llama `emparejamiento-<región>`
+# (una réplica por región, no un solo "-consumidor" genérico — ver
+# docker-compose.yml y el README de emparejamiento): con REGION_BASE=andina
+# el servicio real es `emparejamiento-andina`, no `emparejamiento-consumidor`
+# (ese nombre no existe y `docker compose stop/up` fallaba con
+# "no such service" en cada paso de c y d).
 COMPOSE_PROYECTO="${PROYECTO_COMPOSE:-}"
-SERVICIO_EMP_CONSUMIDOR="${SERVICIO_EMP_CONSUMIDOR:-emparejamiento-consumidor}"
+SERVICIO_EMP_CONSUMIDOR="${SERVICIO_EMP_CONSUMIDOR:-emparejamiento-$REGION_BASE}"
 
 FECHA="$(date +%Y%m%d-%H%M%S)"
 DIR_RESULTADOS="$RAIZ/docs/resultados"
@@ -85,7 +106,7 @@ resultado ""
 resultado "## a. Carga de acreditaciones (CA-8.1)"
 
 inicio_carga=$(date +%s)
-if python "$RAIZ/herramientas/cargar_acreditaciones.py" \
+if python3 "$RAIZ/herramientas/cargar_acreditaciones.py" \
     --total "$PROVEEDORES" --broker "$BROKER_URL" --listener "$BROKER_LISTENER" \
     >>"$SALIDA" 2>&1; then
   duracion_carga=$(( $(date +%s) - inicio_carga ))
@@ -105,7 +126,7 @@ sleep 10
 resultado ""
 resultado "## b. Latencia de \`GET /candidatos\` (CA-8.2: p95 < 1 s con >= 100.000 proveedores)"
 
-if python "$RAIZ/herramientas/medir_latencia.py" \
+if python3 "$RAIZ/herramientas/medir_latencia.py" \
     "$URL_EMPAREJAMIENTO/candidatos?categoria=PLOMERIA&pais=CO&ciudad=Bogota" \
     --peticiones 200 --concurrencia 20 --umbral-p95-ms 1000 \
     >>"$SALIDA" 2>&1; then
@@ -123,7 +144,7 @@ resultado "  el del consumidor, no el de la conexión (riesgo RT-4 del plan téc
 
 compose stop "$SERVICIO_EMP_CONSUMIDOR" >>"$SALIDA" 2>&1
 
-if python "$RAIZ/herramientas/generador_carga.py" \
+if python3 "$RAIZ/herramientas/generador_carga.py" \
     --topico "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION_BASE" \
     --total "$TRABAJOS" --broker "$BROKER_URL" --listener "$BROKER_LISTENER" \
     >>"$SALIDA" 2>&1; then
@@ -141,10 +162,24 @@ for k in $REPLICAS; do
   limite=$(( $(date +%s) + 600 ))
   while [ "$backlog" -gt 0 ] && [ "$(date +%s)" -lt "$limite" ]; do
     sleep 2
+    # `partitioned-stats` agrega las 4 particiones. Mirar solo la partición 0
+    # (como hacía esta línea) subestima el backlog real: con trabajo_id como
+    # clave, GT reparte los TrabajoCreado entre las 4, así que "drenó" se
+    # declaraba en cuanto la partición 0 vaciaba —casi de inmediato, aunque
+    # 1-3 siguieran llenas— y el throughput medido no tenía nada que ver con
+    # cuántas réplicas estaban realmente consumiendo (por eso 1→2→4 daba
+    # 400→333→333: no escalaba porque no se estaba midiendo el drenaje real).
     backlog=$(
-      compose exec -T broker-1 bin/pulsar-admin topics stats \
-        "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION_BASE-partition-0" 2>/dev/null \
-      | grep -o '"msgBacklog"[^,]*' | grep -o '[0-9]\+' | head -1
+      compose exec -T broker-1 bin/pulsar-admin topics partitioned-stats \
+        "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION_BASE" 2>/dev/null \
+      | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('subscriptions', {}).get('emparejamiento-$REGION_BASE', {}).get('msgBacklog', 0))
+except Exception:
+    print(0)
+"
     )
     backlog="${backlog:-0}"
   done
@@ -168,7 +203,7 @@ for k in $REPLICAS; do
 
   # Recarga el backlog para la siguiente k, con el consumidor detenido de nuevo.
   compose stop "$SERVICIO_EMP_CONSUMIDOR" >>"$SALIDA" 2>&1
-  python "$RAIZ/herramientas/generador_carga.py" \
+  python3 "$RAIZ/herramientas/generador_carga.py" \
     --topico "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION_BASE" \
     --total "$TRABAJOS" --broker "$BROKER_URL" --listener "$BROKER_LISTENER" \
     >>"$SALIDA" 2>&1
@@ -185,14 +220,20 @@ resultado "## d. Región en caliente (CA-8.4)"
 compose up -d --scale "$SERVICIO_EMP_CONSUMIDOR=2" "$SERVICIO_EMP_CONSUMIDOR" >>"$SALIDA" 2>&1
 sleep 3
 
-antes=$(python "$RAIZ/herramientas/medir_latencia.py" "$URL_ACREDITACION/health" \
+antes=$(python3 "$RAIZ/herramientas/medir_latencia.py" "$URL_ACREDITACION/health" \
   --peticiones 50 --concurrencia 10 2>&1 | tee -a "$SALIDA" | grep -c 'FALLA')
 
-PULSAR_ADMIN_URL="http://localhost:8080" bash "$RAIZ/infra/pulsar/agregar-region.sh" "$REGION_NUEVA" \
+# agregar-region.sh corre `pulsar-admin` desde /pulsar/bin (comun.sh), que
+# solo existe DENTRO de la imagen de Pulsar — invocarlo con `bash` directo en
+# el host (como hacía esta línea, con PULSAR_ADMIN_URL apuntando al puerto
+# publicado) fallaba con "/pulsar/bin/pulsar-admin: No such file or
+# directory". Va por `docker compose run`, igual que documenta la cabecera
+# del propio agregar-region.sh y que ya usa el resto del repo.
+compose run --rm pulsar-config bash /infra/agregar-region.sh "$REGION_NUEVA" \
   >>"$SALIDA" 2>&1
 resultado_alta=$?
 
-despues=$(python "$RAIZ/herramientas/medir_latencia.py" "$URL_ACREDITACION/health" \
+despues=$(python3 "$RAIZ/herramientas/medir_latencia.py" "$URL_ACREDITACION/health" \
   --peticiones 50 --concurrencia 10 2>&1 | tee -a "$SALIDA" | grep -c 'FALLA')
 
 if [ "$resultado_alta" -eq 0 ] && [ "$antes" -eq 0 ] && [ "$despues" -eq 0 ]; then
