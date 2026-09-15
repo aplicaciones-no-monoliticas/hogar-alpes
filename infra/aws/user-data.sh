@@ -20,6 +20,11 @@ set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/aplicaciones-no-monoliticas/hogar-alpes.git}"
 DESTINO="${DESTINO:-/opt/hogar-alpes}"
+# `user-data` (cloud-init) corre como root, así que sin esto el clon queda
+# root:root y cualquier `git pull`, `docs/resultados/` de los escenarios, o
+# `.env` posterior falla con "Permission denied" para quien entra por SSH
+# como usuario normal (ubuntu en la AMI de Canonical).
+USUARIO="${SUDO_USER:-ubuntu}"
 
 echo "== Docker + plugin de Compose =="
 if ! command -v docker >/dev/null 2>&1; then
@@ -50,6 +55,9 @@ echo "== docker compose up -d =="
 # El mismo artefacto que corre en el portátil del equipo: ningún archivo de
 # Compose distinto para "producción" (plan técnico §6.2).
 docker compose up -d
+
+echo "== Dueño del repositorio: $USUARIO, no root =="
+chown -R "$USUARIO:$USUARIO" "$DESTINO"
 
 echo "== Listo =="
 echo "Las cuatro API deberían responder en unos minutos en los puertos 8000-8003."
