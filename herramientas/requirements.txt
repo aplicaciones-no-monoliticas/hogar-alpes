@@ -1,0 +1,10 @@
+# Dependencias de herramientas/*.py — mismas versiones que usan los cuatro
+# servicios (ver servicios/*/requirements.txt), para que los contratos Avro
+# se codifiquen exactamente igual desde el host que desde los contenedores.
+#
+#   pip install -r herramientas/requirements.txt
+#
+# medir_latencia.py no está aquí: usa solo la biblioteca estándar a propósito
+# (ver su docstring) — es el único que no necesita nada de esto.
+pulsar-client[avro]==3.5.0
+fastavro==1.9.4

@@ -41,6 +41,20 @@ REGION_BASE="${REGION_BASE:-andina}"
 REGION_NUEVA="${REGION_NUEVA:-conosur}"
 REPLICAS="${REPLICAS:-1 2 4}"
 
+# La cabecera de este script documenta `--proveedores`/`--trabajos` (línea
+# 29) pero no existía ningún parseo de argumentos: se ignoraban en silencio y
+# la corrida "reducida para depurar" en realidad corría con los 100.000/2.000
+# de siempre.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --proveedores) PROVEEDORES="$2"; shift 2 ;;
+    --trabajos) TRABAJOS="$2"; shift 2 ;;
+    --region-base) REGION_BASE="$2"; shift 2 ;;
+    --region-nueva) REGION_NUEVA="$2"; shift 2 ;;
+    *) echo "argumento desconocido: $1" >&2; exit 2 ;;
+  esac
+done
+
 URL_ACREDITACION="${URL_ACREDITACION:-http://localhost:8002}"
 URL_EMPAREJAMIENTO="${URL_EMPAREJAMIENTO:-http://localhost:8003}"
 BROKER_URL="${BROKER_URL:-pulsar://localhost:6650}"
@@ -48,8 +62,15 @@ BROKER_LISTENER="${BROKER_LISTENER:-external}"
 
 # Nombres de servicio en docker-compose.yml (INT-1). Sobrescribibles: este
 # script no debe reescribirse solo porque INT-1 eligió otro nombre.
+#
+# El consumidor regional de Emparejamiento se llama `emparejamiento-<región>`
+# (una réplica por región, no un solo "-consumidor" genérico — ver
+# docker-compose.yml y el README de emparejamiento): con REGION_BASE=andina
+# el servicio real es `emparejamiento-andina`, no `emparejamiento-consumidor`
+# (ese nombre no existe y `docker compose stop/up` fallaba con
+# "no such service" en cada paso de c y d).
 COMPOSE_PROYECTO="${PROYECTO_COMPOSE:-}"
-SERVICIO_EMP_CONSUMIDOR="${SERVICIO_EMP_CONSUMIDOR:-emparejamiento-consumidor}"
+SERVICIO_EMP_CONSUMIDOR="${SERVICIO_EMP_CONSUMIDOR:-emparejamiento-$REGION_BASE}"
 
 FECHA="$(date +%Y%m%d-%H%M%S)"
 DIR_RESULTADOS="$RAIZ/docs/resultados"
@@ -141,10 +162,24 @@ for k in $REPLICAS; do
   limite=$(( $(date +%s) + 600 ))
   while [ "$backlog" -gt 0 ] && [ "$(date +%s)" -lt "$limite" ]; do
     sleep 2
+    # `partitioned-stats` agrega las 4 particiones. Mirar solo la partición 0
+    # (como hacía esta línea) subestima el backlog real: con trabajo_id como
+    # clave, GT reparte los TrabajoCreado entre las 4, así que "drenó" se
+    # declaraba en cuanto la partición 0 vaciaba —casi de inmediato, aunque
+    # 1-3 siguieran llenas— y el throughput medido no tenía nada que ver con
+    # cuántas réplicas estaban realmente consumiendo (por eso 1→2→4 daba
+    # 400→333→333: no escalaba porque no se estaba midiendo el drenaje real).
     backlog=$(
-      compose exec -T broker-1 bin/pulsar-admin topics stats \
-        "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION_BASE-partition-0" 2>/dev/null \
-      | grep -o '"msgBacklog"[^,]*' | grep -o '[0-9]\+' | head -1
+      compose exec -T broker-1 bin/pulsar-admin topics partitioned-stats \
+        "persistent://hogar-alpes/trabajos/evt-trabajo-$REGION_BASE" 2>/dev/null \
+      | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('subscriptions', {}).get('emparejamiento-$REGION_BASE', {}).get('msgBacklog', 0))
+except Exception:
+    print(0)
+"
     )
     backlog="${backlog:-0}"
   done
@@ -188,7 +223,13 @@ sleep 3
 antes=$(python3 "$RAIZ/herramientas/medir_latencia.py" "$URL_ACREDITACION/health" \
   --peticiones 50 --concurrencia 10 2>&1 | tee -a "$SALIDA" | grep -c 'FALLA')
 
-PULSAR_ADMIN_URL="http://localhost:8080" bash "$RAIZ/infra/pulsar/agregar-region.sh" "$REGION_NUEVA" \
+# agregar-region.sh corre `pulsar-admin` desde /pulsar/bin (comun.sh), que
+# solo existe DENTRO de la imagen de Pulsar — invocarlo con `bash` directo en
+# el host (como hacía esta línea, con PULSAR_ADMIN_URL apuntando al puerto
+# publicado) fallaba con "/pulsar/bin/pulsar-admin: No such file or
+# directory". Va por `docker compose run`, igual que documenta la cabecera
+# del propio agregar-region.sh y que ya usa el resto del repo.
+compose run --rm pulsar-config bash /infra/agregar-region.sh "$REGION_NUEVA" \
   >>"$SALIDA" 2>&1
 resultado_alta=$?
 
