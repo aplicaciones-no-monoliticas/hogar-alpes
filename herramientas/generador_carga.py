@@ -61,20 +61,46 @@ PAISES_CIUDADES = {
     'BR': ['Sao Paulo', 'Rio de Janeiro'],
     'AR': ['Buenos Aires', 'Cordoba'],
 }
-CATEGORIAS = ['PLOMERIA', 'GAS', 'ELECTRICIDAD', 'CARPINTERIA', 'SINIESTRO_GRANIZO']
-URGENCIAS = ['BAJA', 'NORMAL', 'ALTA', 'CRITICA']
-CANALES = ['MARKETPLACE', 'APP', 'CALL_CENTER']
+# Los únicos valores que el objeto valor Canal de GT acepta
+# (dominio/objetos_valor.py) — 'APP'/'CALL_CENTER' no existen ahí, y GT no
+# atrapa ese ValueError en la API: revienta con 500 en vez de 400.
+CANALES = ['MARKETPLACE', 'B2B2C']
 # Secuencia de estados que puede seguir un cambio, para --con-cambios-estado.
 SIGUIENTE_ESTADO = {'CREADO': 'EMPAREJANDO', 'EMPAREJANDO': 'ASIGNADO'}
 
+RUTA_REGLAS_POR_DEFECTO = os.path.join(
+    os.path.dirname(__file__), '..', 'infra', 'sidecar', 'reglas_regionales.json',
+)
+# Si el sidecar no está disponible (p. ej. corriendo fuera de este repo),
+# categorías/urgencias genéricas que el _default del sidecar real también
+# acepta — mejor que inventar combinaciones que GT rechazaría siempre.
+_REGLAS_RESPALDO = {'_default': {'categorias': ['PLOMERIA', 'ELECTRICIDAD'],
+                                  'urgencias': ['NORMAL', 'ALTA']}}
 
-def _datos_trabajo(pais):
+
+def _cargar_reglas(ruta):
+    """Mismo archivo que lee el sidecar de GT (infra/sidecar/reglas_regionales.json,
+    ver infra/sidecar/README.md). Sin esto, --categorias/--urgencias generados al
+    azar violan las reglas del país la mayoría de las veces (p. ej. CARPINTERIA no
+    aplica en NINGÚN país, GAS solo en AR, BAJA no aplica en MX ni AR) y GT los
+    rechaza con 400 — no es un fallo de GT, es el generador ignorando la regla que
+    el propio escenario 2 existe para demostrar."""
+    try:
+        with open(ruta, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f'AVISO: no se pudo leer {ruta} ({e}); usando un respaldo genérico', file=sys.stderr)
+        return _REGLAS_RESPALDO
+
+
+def _datos_trabajo(pais, reglas):
+    region = reglas.get(pais, reglas.get('_default', _REGLAS_RESPALDO['_default']))
     return {
         'canal': random.choice(CANALES),
         'partner_id': f'partner-{random.randint(1, 20)}',
         'referencia_externa': str(uuid.uuid4())[:8],
-        'categoria': random.choice(CATEGORIAS),
-        'urgencia': random.choice(URGENCIAS),
+        'categoria': random.choice(region['categorias']),
+        'urgencia': random.choice(region['urgencias']),
         'pais': pais,
         'ciudad': random.choice(PAISES_CIUDADES[pais]),
         'direccion': 'Dirección de prueba 123',
@@ -82,11 +108,11 @@ def _datos_trabajo(pais):
     }
 
 
-def _publicar_via_comando(productor, trabajo_id, pais):
+def _publicar_via_comando(productor, trabajo_id, pais, reglas):
     from contratos.v1.cmd_trabajo import TIPO_CREAR, ComandoCrearTrabajo
     from contratos.v1.mensajes import sobre
 
-    datos = _datos_trabajo(pais)
+    datos = _datos_trabajo(pais, reglas)
     mensaje = ComandoCrearTrabajo(
         **sobre(TIPO_CREAR, 'generador-carga', correlation_id=trabajo_id),
         trabajo_id=trabajo_id, **datos,
@@ -94,11 +120,11 @@ def _publicar_via_comando(productor, trabajo_id, pais):
     productor.send_async(mensaje, partition_key=trabajo_id, callback=lambda *a: None)
 
 
-def _publicar_via_evento(productor, trabajo_id, pais, con_cambios_estado):
+def _publicar_via_evento(productor, trabajo_id, pais, con_cambios_estado, reglas):
     from contratos.v1.evt_trabajo import TIPO_CREADO, TIPO_ESTADO_CAMBIADO, EventoTrabajo
     from contratos.v1.mensajes import sobre
 
-    datos = _datos_trabajo(pais)
+    datos = _datos_trabajo(pais, reglas)
     creado = EventoTrabajo(
         **sobre(TIPO_CREADO, 'generador-carga', correlation_id=trabajo_id),
         trabajo_id=trabajo_id, partner_id=datos['partner_id'], canal=datos['canal'],
@@ -144,8 +170,8 @@ def _http(url, metodo, cuerpo, timeout):
         return False, b''
 
 
-def _publicar_via_http(base_url, pais, timeout, con_cambios_estado):
-    datos = _datos_trabajo(pais)
+def _publicar_via_http(base_url, pais, timeout, con_cambios_estado, reglas):
+    datos = _datos_trabajo(pais, reglas)
     ok, cuerpo_resp = _http(f'{base_url.rstrip("/")}/trabajos', 'POST', datos, timeout)
     if not ok or not con_cambios_estado:
         return ok
@@ -189,6 +215,10 @@ def main():
     parser.add_argument('--progreso-cada', type=int, default=100)
     parser.add_argument('--semilla', type=int, default=None, help='para corridas reproducibles')
     parser.add_argument('--timeout-http', type=float, default=5.0)
+    parser.add_argument('--reglas', default=RUTA_REGLAS_POR_DEFECTO,
+                         help='reglas_regionales.json a respetar al elegir categoría/urgencia '
+                              '(el mismo que lee el sidecar de GT) — evita generar combinaciones '
+                              'que el escenario 2 rechazaría con 400, ajenas a lo que se mide aquí')
     args = parser.parse_args()
 
     if args.semilla is not None:
@@ -196,6 +226,7 @@ def main():
     paises = [p.strip() for p in args.paises.split(',') if p.strip() in PAISES_CIUDADES]
     if not paises:
         raise SystemExit(f'--paises no tiene ningún país conocido: {args.paises!r}')
+    reglas = _cargar_reglas(args.reglas)
 
     intervalo = (1.0 / args.tasa) if args.tasa > 0 else 0
     limite_tiempo = (time.time() + args.duracion) if args.duracion > 0 else None
@@ -209,6 +240,7 @@ def main():
                 break
             ok = _publicar_via_http(
                 args.via_http, random.choice(paises), args.timeout_http, args.con_cambios_estado,
+                reglas,
             )
             if not ok:
                 errores += 1
@@ -241,9 +273,9 @@ def main():
             trabajo_id = str(uuid.uuid4())
             pais = random.choice(paises)
             if es_evento:
-                _publicar_via_evento(productor, trabajo_id, pais, args.con_cambios_estado)
+                _publicar_via_evento(productor, trabajo_id, pais, args.con_cambios_estado, reglas)
             else:
-                _publicar_via_comando(productor, trabajo_id, pais)
+                _publicar_via_comando(productor, trabajo_id, pais, reglas)
             if (i + 1) % args.progreso_cada == 0:
                 _progreso(i + 1, args.total, inicio)
             if intervalo:
