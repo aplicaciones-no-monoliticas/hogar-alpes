@@ -111,7 +111,7 @@ resultado ""
 resultado "## 1. Línea base — con Operaciones arriba"
 
 BASE_LOG="$DIR_RESULTADOS/.escenario-6-base-$FECHA.txt"
-python "$RAIZ/herramientas/medir_latencia.py" "$URL_GT/trabajos" --metodo POST \
+python3 "$RAIZ/herramientas/medir_latencia.py" "$URL_GT/trabajos" --metodo POST \
   --cuerpo '{"categoria":"PLOMERIA","pais":"CO","ciudad":"Bogota","direccion":"Cra 7","urgencia":"NORMAL"}' \
   --peticiones 50 --concurrencia 10 --umbral-p95-ms 100000 \
   >"$BASE_LOG" 2>&1
@@ -129,7 +129,7 @@ resultado ""
 resultado "## 3. Carga durante ${T} min (N=$N trabajos + cambios de estado), vía HTTP contra GT real"
 
 inicio_carga=$(date +%s)
-python "$RAIZ/herramientas/generador_carga.py" --via-http "$URL_GT" \
+python3 "$RAIZ/herramientas/generador_carga.py" --via-http "$URL_GT" \
   --total "$N" --duracion "$((T * 60))" --con-cambios-estado --progreso-cada 100 \
   >>"$SALIDA" 2>&1
 rc_carga=$?
@@ -141,7 +141,7 @@ resultado ""
 resultado "## 4. Durante la caída (CA-6.1, CA-6.2, CA-6.3, CA-6.6)"
 
 DURANTE_LOG="$DIR_RESULTADOS/.escenario-6-durante-$FECHA.txt"
-python "$RAIZ/herramientas/medir_latencia.py" "$URL_GT/trabajos" --metodo POST \
+python3 "$RAIZ/herramientas/medir_latencia.py" "$URL_GT/trabajos" --metodo POST \
   --cuerpo '{"categoria":"PLOMERIA","pais":"CO","ciudad":"Bogota","direccion":"Cra 7","urgencia":"NORMAL"}' \
   --peticiones 50 --concurrencia 10 --umbral-p95-ms 500 \
   >"$DURANTE_LOG" 2>&1

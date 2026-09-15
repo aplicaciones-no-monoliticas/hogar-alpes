@@ -48,13 +48,12 @@ import uuid
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from contratos.v1.cmd_trabajo import TIPO_CREAR, ComandoCrearTrabajo  # noqa: E402
-from contratos.v1.evt_trabajo import (  # noqa: E402
-    TIPO_CREADO,
-    TIPO_ESTADO_CAMBIADO,
-    EventoTrabajo,
-)
-from contratos.v1.mensajes import sobre  # noqa: E402
+# Los contratos importan `pulsar.schema`: en modo --via-http no hace falta
+# tener pulsar-client instalado en absoluto (es HTTP puro contra GT), así que
+# estos imports se difieren a donde realmente se usan (_publicar_via_comando,
+# _publicar_via_evento, y el bloque de Pulsar en main), no al nivel del
+# módulo. Sin esto, `--via-http` fallaba con ModuleNotFoundError('pulsar')
+# incluso sin necesitarlo para nada.
 
 PAISES_CIUDADES = {
     'CO': ['Bogota', 'Medellin', 'Cali'],
@@ -84,6 +83,9 @@ def _datos_trabajo(pais):
 
 
 def _publicar_via_comando(productor, trabajo_id, pais):
+    from contratos.v1.cmd_trabajo import TIPO_CREAR, ComandoCrearTrabajo
+    from contratos.v1.mensajes import sobre
+
     datos = _datos_trabajo(pais)
     mensaje = ComandoCrearTrabajo(
         **sobre(TIPO_CREAR, 'generador-carga', correlation_id=trabajo_id),
@@ -93,6 +95,9 @@ def _publicar_via_comando(productor, trabajo_id, pais):
 
 
 def _publicar_via_evento(productor, trabajo_id, pais, con_cambios_estado):
+    from contratos.v1.evt_trabajo import TIPO_CREADO, TIPO_ESTADO_CAMBIADO, EventoTrabajo
+    from contratos.v1.mensajes import sobre
+
     datos = _datos_trabajo(pais)
     creado = EventoTrabajo(
         **sobre(TIPO_CREADO, 'generador-carga', correlation_id=trabajo_id),
@@ -217,6 +222,9 @@ def main():
 
     import pulsar
     from pulsar.schema import AvroSchema
+
+    from contratos.v1.cmd_trabajo import ComandoCrearTrabajo
+    from contratos.v1.evt_trabajo import EventoTrabajo
 
     es_evento = 'evt-trabajo' in args.topico
     schema = EventoTrabajo if es_evento else ComandoCrearTrabajo
