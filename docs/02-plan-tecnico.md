@@ -8,17 +8,6 @@ Abreviaturas: **GT** `gestion_trabajos` · **OPS** `operaciones` · **EMP** `emp
 
 ---
 
-## 0. La restricción que manda: dos días
-
-La especificación está aprobada el 11 y la entrega es el 13. El plan está dimensionado para eso:
-
-- **Lo mínimo por servicio**: una o dos tablas, los comandos y consultas que piden los escenarios, nada más.
-- **Mediciones con scripts simples** (bash + Python), sin herramientas nuevas que instalar.
-- **Líneas de corte explícitas** (§10): qué se sacrifica primero si el tiempo no alcanza, y qué no se toca nunca.
-- **Un spike de 45 minutos al principio** (§2.5) para despejar el único riesgo técnico que podría tumbar la demostración de esquemas.
-
----
-
 ## 1. Estructura del repositorio
 
 ```
