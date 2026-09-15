@@ -1,165 +1,182 @@
 # Hogar de los Alpes
 
-Entrega 4 (MISW4406 · Diseño y Construcción de Soluciones No Monolíticas):
-**cuatro microservicios** que se comunican exclusivamente por comandos y
-eventos sobre **Apache Pulsar**, cada uno con su propia base de datos.
-
-La justificación arquitectónica completa está en `docs/`:
-[`01-especificacion.md`](docs/01-especificacion.md) (qué se construye y cómo
-se verifica), [`02-plan-tecnico.md`](docs/02-plan-tecnico.md) (cómo, técnico)
-y [`decisiones.md`](docs/decisiones.md) (lo que cambió durante la
-implementación y por qué).
-
----
+Hogar de los Alpes conecta clientes con proveedores de servicios para el hogar
+(plomería, electricidad, cerrajería, etc.). El sistema está dividido en
+**cuatro servicios pequeños e independientes** que se avisan entre sí enviando
+mensajes, en vez de llamarse directamente unos a otros. A esto se le llama
+**arquitectura orientada a eventos**.
 
 ## Los cuatro servicios
 
-| Servicio | Contexto acotado | Persistencia | Puerto (local) |
-|---|---|---|---|
-| `gestion_trabajos` | Gestión de Trabajos — el núcleo | CRUD PostgreSQL | 8000 |
-| `operaciones` | Operaciones y Calidad — reactor puro | CRUD PostgreSQL | 8001 |
-| `acreditacion` | Acreditación — subdominio núcleo | **Event Sourcing** PostgreSQL | 8002 |
-| `emparejamiento` | Emparejamiento y Publicación | CRUD (proyección + escritura) PostgreSQL | 8003 |
+| Servicio | Qué hace |
+|---|---|
+| `gestion_trabajos` | Recibe las solicitudes de trabajo, las registra y administra su ciclo de vida (creado, en ejecución, completado, etc.) |
+| `operaciones` | Hace seguimiento a cada trabajo: le asigna una prioridad y un tiempo límite de atención |
+| `acreditacion` | Administra qué proveedores están certificados, en qué categorías y desde cuándo — guarda el historial completo, no solo el estado actual |
+| `emparejamiento` | Busca proveedores certificados y disponibles para asignarlos a un trabajo |
 
-Cada uno vive en `servicios/<nombre>/`, es autocontenido (su Dockerfile, sus
-dependencias, su seedwork copiado — decisión `TO-7`) y arranca como **dos
-procesos** de la misma imagen: `api` (HTTP, gunicorn) y `consumidor` (Pulsar).
-Eso es lo que permite escalar consumidores sin tocar el puerto HTTP
-(escenario 8) y detener un reactor sin tumbar su API (escenario 6).
-
-```
-                         Apache Pulsar (clúster propio)
-        cmd-trabajo-*         evt-trabajo-*        evt-acreditacion
-             │                  │    │                    │
-             ▼                  ▼    ▼                    ▼
-  ┌────────────────┐   ┌─────────────┐   ┌──────────────┐   ┌───────────────┐
-  │ gestion_trabajos│──▶│ operaciones │   │ acreditacion │──▶│ emparejamiento│
-  │  (CRUD)         │   │  (CRUD)     │   │ (Event Src.) │   │  (proyección) │
-  └────────────────┘   └─────────────┘   └──────────────┘   └───────────────┘
-```
-
-Ningún servicio le habla a otro por HTTP (RNF-1): cada red Docker conecta un
-servicio solo con el broker y con **su propia** base de datos (`docker-compose.yml`,
-INF-5/CA-T1).
+Cada servicio tiene su propia base de datos y nunca se comunica con otro por
+llamadas directas (HTTP): todo lo que se avisan entre sí viaja por
+**Apache Pulsar**, el sistema de mensajería del proyecto.
 
 ---
 
-## Cómo levantarlo
+## Escenarios de calidad a probar
 
-Requiere Docker y el plugin de Compose. Desde un clon limpio:
+El proyecto debe demostrar que el sistema cumple con estas cinco propiedades:
 
-```bash
-cp .env.example .env      # opcional: todas las variables tienen valor por defecto
-docker compose up -d --build
-```
-
-Esto levanta, en orden: ZooKeeper, dos *bookies* y dos *brokers* de Pulsar,
-`pulsar-config` (crea tenant/namespaces/tópicos/suscripciones, idempotente),
-las cuatro bases de datos y los ocho procesos de servicio (api + consumidor ×
-4). La primera vez tarda unos minutos en construir las imágenes.
-
-```bash
-docker compose ps                 # todo en `healthy` o `running`
-curl localhost:8000/health        # gestion-trabajos
-curl localhost:8001/health        # operaciones
-curl localhost:8002/health        # acreditacion
-curl localhost:8003/health        # emparejamiento
-```
-
-Para agregar una región en caliente (CA-8.4):
-
-```bash
-docker compose run --rm pulsar-config bash /infra/agregar-region.sh conosur
-docker compose --profile conosur up -d emparejamiento-conosur
-```
-
-### Pruebas
-
-Cada servicio tiene su propia suite, sin depender de un broker real (los
-`tests/conftest.py` reemplazan la publicación por un no-op):
-
-```bash
-for s in gestion_trabajos operaciones acreditacion emparejamiento; do
-  (cd servicios/$s && pip install -r requirements.txt -q && pytest -q)
-done
-```
-
-### Postman
-
-`postman/hogar-alpes.postman_collection.json` + entornos `local`
-(`hogar-alpes.postman_environment.json`) y `aws`
-(`hogar-alpes-aws.postman_environment.json`):
-
-```bash
-npx newman run postman/hogar-alpes.postman_collection.json \
-  -e postman/hogar-alpes.postman_environment.json
-```
-
----
-
-## Escenarios de calidad — un comando por escenario (RNF-8)
-
-Cada script imprime **PASA/FALLA por criterio de aceptación** y guarda su
-salida en `docs/resultados/`.
-
-| Escenario | Script | Qué demuestra |
+| Escenario | Qué se prueba | Métrica esperada |
 |---|---|---|
-| **6** · Disponibilidad | `escenarios/escenario-6.sh` | El reactor de Operaciones cae ≥ 30 min: Gestión de Trabajos no se entera, el backlog se retiene y se drena al 100% |
-| **8** · Escalabilidad | `escenarios/escenario-8.sh` | Throughput ~lineal 1→2 réplicas, región nueva sin interrumpir las activas, consulta < 1 s con ≥ 100.000 proveedores |
-| **MOD-1** | `escenarios/mod-1.sh` | Reemplazar el adaptador de persistencia de Gestión de Trabajos por configuración, sin tocar `dominio/` ni `aplicacion/` |
-| **MOD-2** | `escenarios/mod-2.sh` | País nuevo por el sidecar de reglas regionales, sin reconstruir la imagen |
-| **MOD-3** | `escenarios/mod-3.sh` | Estado nuevo en el ciclo de vida: se redespliega solo Gestión de Trabajos, Operaciones y Emparejamiento ni se reinician |
-| Esquemas | `escenarios/esquemas.py` | CA-E1 (campo opcional aceptado) y CA-E2 (cambio incompatible rechazado) contra el Schema Registry de Pulsar |
-
-Herramientas de apoyo, en `herramientas/`: `generador_carga.py` (publica
-trabajos a una tasa/tiempo dados), `medir_latencia.py` (p50/p95/p99),
-`cargar_acreditaciones.py` (100.000 acreditaciones), `verificar_contratos.py`
-y `spike_esquemas.py` (los instrumentos de INF-0 y CON-1).
-
-**Estado de las corridas formales:** ver `docs/resultados/` y
-`docs/decisiones.md` — varios escenarios se escribieron y verificaron con
-`pytest`, pero su corrida de punta a punta contra un clúster real (o contra
-AWS, para DEP-2) puede seguir pendiente si no se ha ejecutado todavía en este
-entorno; el estado exacto por tarea está en `docs/03-tareas.md`.
+| **Cambiar cómo se guardan los datos** | Reemplazar la forma en que Gestión de Trabajos guarda su información | **0** archivos de las reglas de negocio cambiados |
+| **Agregar un país nuevo** | Sumar un país con sus propias reglas (categorías y urgencias permitidas) | **0** archivos de código cambiados, sin reconstruir el servicio |
+| **Agregar un estado nuevo** | Sumar un paso nuevo al ciclo de vida de un trabajo | **0** servicios reiniciados aparte de Gestión de Trabajos |
+| **Disponibilidad** | Un servicio deja de funcionar 30 minutos o más | **0** errores en el resto del sistema durante la caída · el tiempo de respuesta no sube más del **10%** (se mantiene bajo **500 ms**) · al reactivarse, se procesa el **100%** de lo acumulado, sin duplicados |
+| **Escalabilidad** | El sistema recibe una carga alta de trabajos y consultas | Al duplicar la capacidad de un servicio, su velocidad casi se duplica (degradación menor al **10%**) · las consultas responden en menos de **1 segundo** con más de **100.000** proveedores registrados · agregar una región nueva no afecta a las que ya estaban activas |
 
 ---
 
-## Topología de datos y esquemas
-
-- **Descentralizada**: una instancia de PostgreSQL por servicio (§7 de la
-  especificación), justificada contra los escenarios 6 y 8, no por dogma.
-- **Avro + Schema Registry de Pulsar**, `FULL_TRANSITIVE`. Todo campo se
-  declara `Tipo(default=None, required_default=True)` — sin eso el broker
-  rechaza cualquier evolución (hallazgo de INF-0, `docs/decisiones.md`).
-- Los contratos canónicos viven en `contratos/v1/`; cada servicio guarda su
-  propia copia del lado que usa (productor o consumidor) — decisión `TO-7`,
-  no una biblioteca compartida.
-
----
-
-## Estructura del repositorio
+## Estructura del proyecto
 
 ```
 hogar-alpes/
-├── servicios/            gestion_trabajos · operaciones · acreditacion · emparejamiento
-│   └── _plantilla/       la carpeta que se copia para levantar un servicio nuevo
-├── contratos/v1/          esquemas Avro canónicos (CON-1)
-├── infra/
-│   ├── pulsar/            inicializar.sh · agregar-region.sh · topologia.env
-│   ├── sidecar/            reglas_regionales.json — el volumen de MOD-2
-│   └── aws/                user-data.sh · README.md del despliegue (DEP-1)
-├── escenarios/             un script por escenario (RNF-8)
-├── herramientas/           generador de carga, medición, carga masiva, verificación
-├── postman/                colección + entornos local/aws
-├── docs/                   especificación · plan técnico · tareas · decisiones · resultados
-├── docker-compose.yml
-└── .env.example
+├── servicios/          código de los cuatro microservicios
+├── contratos/            la forma de los mensajes que viajan entre servicios
+├── infra/                configuración de la mensajería y del despliegue
+├── escenarios/           scripts para poner a prueba cada escenario de calidad
+├── herramientas/         scripts de apoyo: generar carga, medir tiempos de respuesta
+├── postman/              colección de pruebas para la API de cada servicio
+├── docs/                 documentación del proyecto
+└── docker-compose.yml    receta para levantar todo el sistema de una vez
+```
+
+Cada servicio, dentro de `servicios/<nombre>/`, sigue la misma organización
+interna: sus reglas de negocio, sus casos de uso y su conexión con la base de
+datos y con Pulsar están separados en carpetas distintas, para que cambiar una
+parte no obligue a tocar las demás.
+
+---
+
+## Cómo desplegar los servicios
+
+1. Tener **Docker** instalado (con el complemento de Compose).
+2. Clonar el repositorio.
+3. Opcional: copiar `.env.example` a `.env` — todas las variables ya traen un valor por defecto.
+4. Levantar todo el sistema con un solo comando:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+5. Esperar unos minutos mientras se construyen las imágenes y arranca la mensajería.
+6. Verificar que cada servicio responda:
+
+   | Servicio | Dirección |
+   |---|---|
+   | `gestion_trabajos` | http://localhost:8000/health |
+   | `operaciones` | http://localhost:8001/health |
+   | `acreditacion` | http://localhost:8002/health |
+   | `emparejamiento` | http://localhost:8003/health |
+
+**Para probar la escalabilidad:** se puede levantar más copias de un servicio
+sin apagar el resto del sistema:
+
+```bash
+docker compose up -d --scale emparejamiento-andina=4
+```
+
+**Para agregar una región nueva** (por ejemplo, para atender un país en otra
+zona) sin apagar nada:
+
+```bash
+docker compose run --rm pulsar-config bash /infra/agregar-region.sh conosur
 ```
 
 ---
 
-## Documento de actividades
+## Flujos que se van a probar
 
-`docs/actividades.md` enlaza cada tarea de `docs/03-tareas.md` con los
-commits y PR que la implementaron, por integrante (requisito de la rúbrica:
-contribuciones equitativas y verificables).
+**1. Crear un trabajo.** Un cliente pide un trabajo → Gestión de Trabajos lo
+registra → avisa automáticamente a Operaciones (para hacerle seguimiento) y a
+Emparejamiento (para buscarle candidatos). Gestión de Trabajos no espera
+respuesta de ninguno de los dos: simplemente avisa y sigue.
+
+Solicitud de ejemplo que inicia el flujo:
+
+```bash
+curl -X POST http://localhost:8000/trabajos \
+  -H "Content-Type: application/json" \
+  -d '{
+    "categoria": "PLOMERIA",
+    "urgencia": "ALTA",
+    "pais": "CO",
+    "ciudad": "Bogota",
+    "direccion": "Cra 7 # 71-21",
+    "descripcion": "Fuga de agua en la cocina"
+  }'
+```
+
+**2. Acreditar un proveedor.** Se aprueba la certificación de un proveedor →
+Acreditación guarda el hecho en su historial → avisa a Emparejamiento, que
+actualiza su lista de proveedores disponibles para usarla en búsquedas
+futuras.
+
+Solicitud de ejemplo que inicia el flujo:
+
+```bash
+curl -X POST http://localhost:8002/acreditaciones \
+  -H "Content-Type: application/json" \
+  -d '{
+    "proveedor_id": "prov-001",
+    "pais": "CO",
+    "ciudad": "Bogota",
+    "categorias": ["PLOMERIA"],
+    "nivel": "ORO",
+    "vigencia_meses": 12
+  }'
+```
+
+Luego se aprueba con `PUT /acreditaciones/prov-001/aprobar`.
+
+**3. Disponibilidad (escenario de caída).** Se detiene Operaciones mientras se
+siguen creando trabajos. Se comprueba que Gestión de Trabajos sigue
+respondiendo con normalidad, y que al reactivar Operaciones esta procesa todo
+lo acumulado, sin perder ni repetir ningún trabajo.
+
+```bash
+docker compose stop operaciones-consumidor
+# mientras tanto, se repite la misma solicitud de "crear un trabajo" de arriba
+docker compose start operaciones-consumidor
+```
+
+**4. Escalabilidad (escenario de crecimiento).** Se genera una carga alta de
+trabajos y de acreditaciones. Se agregan más copias de Emparejamiento y una
+región nueva mientras el sistema sigue en funcionamiento, y se comprueba que
+las consultas siguen respondiendo rápido y que las regiones que ya estaban
+activas no se interrumpen.
+
+```bash
+docker compose up -d --scale emparejamiento-andina=4
+curl "http://localhost:8003/candidatos?categoria=PLOMERIA&pais=CO&ciudad=Bogota"
+```
+
+---
+
+## Cómo se prueban los escenarios
+
+Cada escenario de calidad tiene su propio script en `escenarios/`, que lo
+pone a prueba de principio a fin sin que nadie tenga que revisarlo a mano:
+hace los cambios necesarios, genera el tráfico que hace falta, y al final
+dice si cada métrica se cumplió o no.
+
+| Script | Qué hace |
+|---|---|
+| `mod-1.sh` | Reinicia Gestión de Trabajos guardando la información en memoria en vez de en la base de datos, y comprueba que las reglas de negocio no tuvieron que cambiar ni un archivo |
+| `mod-2.sh` | Agrega un país nuevo al archivo de reglas regionales, reinicia el servicio y comprueba que el país nuevo funciona sin tocar ni un archivo de código |
+| `mod-3.sh` | Agrega un estado nuevo al ciclo de vida de un trabajo, redespliega solo Gestión de Trabajos, y comprueba que Operaciones y Emparejamiento siguen funcionando sin reiniciarse |
+| `escenario-6.sh` | Detiene Operaciones, genera trabajos durante varios minutos y, al reactivarlo, comprueba que procesó todo lo acumulado sin perder ni repetir nada |
+| `escenario-8.sh` | Carga miles de acreditaciones y de trabajos, agrega más copias de Emparejamiento y una región nueva, y mide si las consultas y el procesamiento se mantienen rápidos |
+| `esquemas.py` | Agrega un campo nuevo a un mensaje y comprueba que el sistema lo acepta; luego intenta un cambio incompatible y comprueba que el sistema lo rechaza |
+
+Al terminar, cada script deja un archivo en `docs/resultados/` con el
+resultado de cada métrica marcado como **PASA** o **FALLA**, listo para
+revisar sin tener que repetir la prueba.
