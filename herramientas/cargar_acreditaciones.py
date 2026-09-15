@@ -86,7 +86,18 @@ def main():
     cliente = pulsar.Client(
         args.broker, listener_name=args.listener or None, operation_timeout_seconds=30,
     )
-    productor = cliente.create_producer(args.topico, schema=AvroSchema(ComandoAcreditacion))
+    # `block_if_queue_full`: sin esto, 200.000 `send_async()` en un for síncrono
+    # saturan la cola interna del productor (tope por defecto: 1000 mensajes
+    # pendientes) mucho más rápido de lo que el broker confirma, y el cliente
+    # empieza a fallar cada envío con ProducerQueueIsFull en vez de esperar —
+    # se vio en una corrida real: 12.183/200.000 mensajes perdidos. Con esto,
+    # `send_async` bloquea el hilo llamador cuando la cola está llena —
+    # exactamente la contrapresión que un cargador masivo necesita: más lento,
+    # pero cero mensajes descartados.
+    productor = cliente.create_producer(
+        args.topico, schema=AvroSchema(ComandoAcreditacion),
+        block_if_queue_full=True, max_pending_messages=5000,
+    )
 
     fallos = []
 
