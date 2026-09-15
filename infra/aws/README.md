@@ -56,7 +56,29 @@ que alguien más puso.
 |---|---|---|
 | 22 (SSH) | Solo las IP del equipo | Administración |
 | 8000-8003 | `0.0.0.0/0` durante la sustentación; si no, solo las IP del equipo | Las cuatro API (trabajos, operaciones, acreditación, emparejamiento) |
-| 6650, 6651, 8080, 8081, 5432 y los puertos de PostgreSQL | **Nadie** | Pulsar y las bases de datos **no se exponen**: su administración va por SSH (`docker compose exec`) |
+| 9527 | `0.0.0.0/0`, **solo si `exponer_pulsar_manager=true`** (por defecto `false`) | Pulsar Manager — panel visual para la demo, ver `infra/pulsar/README.md` |
+| 6650, 6651, 8080, 8081, 5432 y los puertos de PostgreSQL | **Nadie** | Pulsar y las bases de datos **no se exponen** directo; su administración va por SSH (`docker compose exec`) — Pulsar Manager es la única ventana visual, y deliberadamente detrás de un interruptor aparte |
+
+### Abrir Pulsar Manager para la demo (y cerrarlo después)
+
+```bash
+cd infra/aws/terraform
+terraform apply -var="exponer_pulsar_manager=true" -var="ssh_cidr=<TU-IP>/32"
+```
+
+Esto **no** recrea la instancia — agrega una sola regla al security group. Por SSH, arriba en la instancia:
+
+```bash
+docker compose --profile demo up -d pulsar-manager
+infra/pulsar/pulsar-manager-setup.sh
+```
+
+Con eso, `http://<IP-PUBLICA-EC2>:9527` queda accesible para cualquiera durante la demo (es la opción que se eligió — sin esto, el panel es solo del equipo). Al terminar:
+
+```bash
+terraform apply -var="exponer_pulsar_manager=false" -var="ssh_cidr=<TU-IP>/32"
+# opcional, por SSH: docker compose --profile demo stop pulsar-manager
+```
 
 ## 3. Primer arranque
 

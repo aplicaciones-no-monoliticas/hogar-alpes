@@ -40,6 +40,25 @@ variable "ssh_cidr" {
   type        = string
 }
 
+variable "exponer_pulsar_manager" {
+  description = <<-EOT
+    Abre el puerto 9527 (Pulsar Manager) a 0.0.0.0/0 — SOLO para la sesión de
+    demo/sustentación. Por defecto false: el panel de administración de
+    Pulsar no tiene autenticación fuerte (usuario/clave que crea
+    infra/pulsar/pulsar-manager-setup.sh), así que dejarlo abierto de forma
+    permanente no es lo que se quiere. Flujo recomendado:
+
+      terraform apply -var="exponer_pulsar_manager=true" -var="ssh_cidr=..."
+      # ... hacer la demo ...
+      terraform apply -var="exponer_pulsar_manager=false" -var="ssh_cidr=..."
+
+    Ninguno de los dos comandos recrea la instancia — solo agrega o quita
+    esta única regla del security group.
+  EOT
+  type        = bool
+  default     = false
+}
+
 data "aws_vpc" "default" {
   default = true
 }
@@ -114,11 +133,27 @@ resource "aws_security_group" "hogar_alpes" {
 
   # Pulsar (6650-6651, 8080-8081) y PostgreSQL NUNCA se exponen — sin regla
   # de ingreso para ellos. Su administración va por SSH (docker compose exec).
+  # Pulsar Manager (9527) es la única excepción, y solo cuando
+  # exponer_pulsar_manager=true — ver esa variable y la regla aparte abajo.
 
   tags = {
     Name     = "hogar-alpes-sg"
     Proyecto = "hogar-alpes"
   }
+}
+
+# Regla separada (no un bloque `ingress` más del recurso de arriba) para que
+# activarla/desactivarla sea un cambio de una sola regla, no un diff del
+# security group completo cada vez que se prende y se apaga para la demo.
+resource "aws_security_group_rule" "pulsar_manager_demo" {
+  count             = var.exponer_pulsar_manager ? 1 : 0
+  type              = "ingress"
+  security_group_id = aws_security_group.hogar_alpes.id
+  from_port         = 9527
+  to_port           = 9527
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  description       = "Pulsar Manager - SOLO durante la demo (exponer_pulsar_manager=true)"
 }
 
 resource "aws_instance" "hogar_alpes" {
@@ -155,4 +190,9 @@ output "urls" {
     acreditacion     = "http://${aws_instance.hogar_alpes.public_ip}:8002/health"
     emparejamiento   = "http://${aws_instance.hogar_alpes.public_ip}:8003/health"
   }
+}
+
+output "pulsar_manager_url" {
+  description = "Solo resuelve algo útil si exponer_pulsar_manager=true y el contenedor está arriba (docker compose --profile demo up -d pulsar-manager + infra/pulsar/pulsar-manager-setup.sh, por SSH)"
+  value       = "http://${aws_instance.hogar_alpes.public_ip}:9527"
 }
