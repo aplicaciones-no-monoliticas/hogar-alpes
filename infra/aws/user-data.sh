@@ -35,6 +35,19 @@ else
 fi
 cd "$DESTINO"
 
+echo "== Python para herramientas/ (escenarios 6 y 8 corren por SSH, no en Docker) =="
+# pulsar-client necesita compilar contra binarios propios: python3-venv +
+# python3-pip de Ubuntu alcanzan, no hace falta build-essential.
+if [ ! -d "$DESTINO/.venv" ]; then
+  apt-get update -y
+  apt-get install -y python3-venv python3-pip
+  python3 -m venv "$DESTINO/.venv"
+  "$DESTINO/.venv/bin/pip" install --upgrade pip
+  "$DESTINO/.venv/bin/pip" install -r "$DESTINO/herramientas/requirements.txt"
+else
+  echo "$DESTINO/.venv ya existe, no se toca."
+fi
+
 echo "== Generar .env con credenciales propias de esta instancia =="
 if [ ! -f .env ]; then
   cp .env.example .env

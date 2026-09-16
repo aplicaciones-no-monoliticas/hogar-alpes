@@ -1,0 +1,97 @@
+{
+  "uid": "pulsar-hda",
+  "title": "Pulsar — Hogar de los Alpes",
+  "tags": ["pulsar", "hogar-alpes"],
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Brokers arriba",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum(up{job=\"pulsar-broker\"})", "legendFormat": "brokers" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Bookies arriba",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        { "expr": "sum(up{job=\"pulsar-bookie\"})", "legendFormat": "bookies" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Backlog por suscripción (mensajes) — escenario 6 y 8",
+      "description": "pulsar_subscription_back_log por tópico/suscripción. Es el panel para ver el backlog de operaciones creciendo (escenario 6) o drenando al escalar réplicas (escenario 8).",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "pulsar_subscription_back_log{namespace=~\"hogar-alpes.*\"}",
+          "legendFormat": "{{topic}} · {{subscription}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Tasa de mensajes por tópico (in/out)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "pulsar_rate_in{namespace=~\"hogar-alpes.*\"}",
+          "legendFormat": "in · {{topic}}"
+        },
+        {
+          "expr": "pulsar_rate_out{namespace=~\"hogar-alpes.*\"}",
+          "legendFormat": "out · {{topic}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Throughput por tópico (bytes/s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "pulsar_throughput_in{namespace=~\"hogar-alpes.*\"}",
+          "legendFormat": "in · {{topic}}"
+        },
+        {
+          "expr": "pulsar_throughput_out{namespace=~\"hogar-alpes.*\"}",
+          "legendFormat": "out · {{topic}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Tamaño almacenado por tópico (backlog en disco)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "pulsar_storage_size{namespace=~\"hogar-alpes.*\"}",
+          "legendFormat": "{{topic}}"
+        }
+      ]
+    }
+  ]
+}

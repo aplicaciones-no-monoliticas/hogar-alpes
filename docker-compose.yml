@@ -185,6 +185,46 @@ services:
     environment:
       SPRING_CONFIGURATION_FILE: /pulsar-manager/pulsar-manager/application.properties
 
+  # Gráficas para la demo — mismo profile e idea que pulsar-manager, pero con
+  # series de tiempo (throughput, backlog) en vez de una tabla estática.
+  # Prometheus scrapea el /metrics que el broker y los bookies ya exponen de
+  # fábrica (infra/pulsar/prometheus.yml): no hay exporter que instalar.
+  #   docker compose --profile demo up -d prometheus grafana
+  #   http://localhost:3000  (usuario admin, clave GRAFANA_PASSWORD o "hogaralpes")
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: hda-prometheus
+    profiles: [demo]
+    networks: [red-broker]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/pulsar/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    depends_on:
+      broker-1:
+        condition: service_healthy
+
+  # El dashboard de infra/pulsar/grafana/dashboards/pulsar.json y el
+  # datasource de Prometheus se cargan solos por provisioning — no hay UI que
+  # configurar a mano, a diferencia de Pulsar Manager.
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: hda-grafana
+    profiles: [demo]
+    networks: [red-broker]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-hogaralpes}
+    volumes:
+      - ./infra/pulsar/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/pulsar/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
   # ------------------------------------------------- 1 · Gestión de Trabajos
   postgres-trabajos: &postgres
     image: postgres:16-alpine

@@ -52,3 +52,18 @@ infra/pulsar/pulsar-manager-setup.sh          # una sola vez: crea el usuario ad
 Luego entra a `http://localhost:9527` (o al puerto publicado en AWS — ver `infra/aws/README.md`, variable `exponer_pulsar_manager`) con las credenciales que imprimió el script, y agrega manualmente un "New Environment" apuntando a `http://broker-1:8080` (Pulsar Manager no tiene una API pública para registrar entornos, es un paso de UI).
 
 Para apagarlo cuando termine la demo: `docker compose --profile demo stop pulsar-manager` (o `down` para quitarlo).
+
+## Prometheus + Grafana — gráficas para la demo (opcional)
+
+Pulsar Manager es una tabla; para ver el backlog del escenario 6 o el throughput del escenario 8 como una **serie de tiempo** ayuda más un dashboard. Igual que Pulsar Manager, **no es parte del sistema en producción** y vive detrás del mismo `--profile demo`:
+
+```bash
+docker compose --profile demo up -d prometheus grafana
+```
+
+Entra a `http://localhost:3000` (usuario `admin`, clave `GRAFANA_PASSWORD` del `.env` o `hogaralpes` por defecto). El datasource de Prometheus y el dashboard **Pulsar — Hogar de los Alpes** (carpeta *Pulsar*) ya están cargados por provisioning — a diferencia de Pulsar Manager, aquí no hay que agregar nada a mano.
+
+- **Prometheus** (`infra/pulsar/prometheus.yml`) scrapea el endpoint `/metrics` que el broker (`:8080`) y los bookies (`:8000`) ya exponen de fábrica — sin exporter aparte.
+- El dashboard trae: brokers/bookies arriba, **backlog por suscripción** (el panel del escenario 6 y del paso c del escenario 8), tasa de mensajes in/out por tópico, throughput en bytes y tamaño almacenado.
+
+Para apagarlo: `docker compose --profile demo stop prometheus grafana` (o `down` para quitarlo).

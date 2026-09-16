@@ -1,0 +1,12 @@
+# Carga cualquier .json en /var/lib/grafana/dashboards como dashboard —
+# así el que se agrega en el compose (pulsar.json) aparece solo, sin
+# importarlo a mano.
+apiVersion: 1
+
+providers:
+  - name: pulsar
+    folder: Pulsar
+    type: file
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

@@ -57,27 +57,28 @@ que alguien más puso.
 | 22 (SSH) | Solo las IP del equipo | Administración |
 | 8000-8003 | `0.0.0.0/0` durante la sustentación; si no, solo las IP del equipo | Las cuatro API (trabajos, operaciones, acreditación, emparejamiento) |
 | 9527 | `0.0.0.0/0`, **solo si `exponer_pulsar_manager=true`** (por defecto `false`) | Pulsar Manager — panel visual para la demo, ver `infra/pulsar/README.md` |
-| 6650, 6651, 8080, 8081, 5432 y los puertos de PostgreSQL | **Nadie** | Pulsar y las bases de datos **no se exponen** directo; su administración va por SSH (`docker compose exec`) — Pulsar Manager es la única ventana visual, y deliberadamente detrás de un interruptor aparte |
+| 3000 | `0.0.0.0/0`, **solo si `exponer_grafana=true`** (por defecto `false`) | Grafana — gráficas de throughput/backlog para la demo, ver `infra/pulsar/README.md` |
+| 6650, 6651, 8080, 8081, 9090, 5432 y los puertos de PostgreSQL | **Nadie** | Pulsar, Prometheus y las bases de datos **no se exponen** directo; su administración va por SSH (`docker compose exec`) — Pulsar Manager y Grafana son las únicas ventanas visuales, y deliberadamente detrás de un interruptor aparte cada una |
 
-### Abrir Pulsar Manager para la demo (y cerrarlo después)
+### Abrir Pulsar Manager o Grafana para la demo (y cerrarlos después)
 
 ```bash
 cd infra/aws/terraform
-terraform apply -var="exponer_pulsar_manager=true" -var="ssh_cidr=<TU-IP>/32"
+terraform apply -var="exponer_pulsar_manager=true" -var="exponer_grafana=true" -var="ssh_cidr=<TU-IP>/32"
 ```
 
-Esto **no** recrea la instancia — agrega una sola regla al security group. Por SSH, arriba en la instancia:
+Esto **no** recrea la instancia — agrega una regla al security group por cada interruptor en `true`. Por SSH, arriba en la instancia:
 
 ```bash
-docker compose --profile demo up -d pulsar-manager
+docker compose --profile demo up -d pulsar-manager prometheus grafana
 infra/pulsar/pulsar-manager-setup.sh
 ```
 
-Con eso, `http://<IP-PUBLICA-EC2>:9527` queda accesible para cualquiera durante la demo (es la opción que se eligió — sin esto, el panel es solo del equipo). Al terminar:
+Con eso, `http://<IP-PUBLICA-EC2>:9527` (Pulsar Manager) y `http://<IP-PUBLICA-EC2>:3000` (Grafana) quedan accesibles para cualquiera durante la demo (es la opción que se eligió — sin esto, los paneles son solo del equipo). Al terminar:
 
 ```bash
-terraform apply -var="exponer_pulsar_manager=false" -var="ssh_cidr=<TU-IP>/32"
-# opcional, por SSH: docker compose --profile demo stop pulsar-manager
+terraform apply -var="exponer_pulsar_manager=false" -var="exponer_grafana=false" -var="ssh_cidr=<TU-IP>/32"
+# opcional, por SSH: docker compose --profile demo stop pulsar-manager prometheus grafana
 ```
 
 ## 3. Primer arranque
@@ -88,11 +89,13 @@ Si no se usó `user-data.sh` al lanzar la instancia, se corre a mano por SSH:
 curl -fsSL https://raw.githubusercontent.com/aplicaciones-no-monoliticas/hogar-alpes/main/infra/aws/user-data.sh | bash
 ```
 
-Genera `.env` con una contraseña propia de la instancia (no la del repositorio)
-y levanta `docker compose up -d`. Los primeros minutos: ZooKeeper, los bookies
-y los brokers arrancan, `pulsar-config` crea la topología, y las cuatro
-imágenes se construyen. `docker compose ps` debe mostrar todo `healthy` o
-`running`.
+Genera `.env` con una contraseña propia de la instancia (no la del repositorio),
+crea un venv de Python en `.venv` con `herramientas/requirements.txt` (lo que
+usan `escenarios/escenario-6.sh` y `escenarios/escenario-8.sh` para cargar
+datos y medir — corren en el host, no dentro de Docker) y levanta
+`docker compose up -d`. Los primeros minutos: ZooKeeper, los bookies y los
+brokers arrancan, `pulsar-config` crea la topología, y las cuatro imágenes se
+construyen. `docker compose ps` debe mostrar todo `healthy` o `running`.
 
 ## 4. Verificar desde fuera
 
@@ -106,7 +109,21 @@ curl http://<IP-PÚBLICA>:8003/health   # emparejamiento
 Y con Postman: entorno `aws` (`postman/hogar-alpes-aws.postman_environment.json`),
 reemplazando `<IP-PUBLICA-EC2>` por la IP real de la instancia.
 
-## 5. Costo y apagado
+## 5. Correr los escenarios en la EC2
+
+Por SSH, desde `$DESTINO` (por defecto `/opt/hogar-alpes`):
+
+```bash
+source .venv/bin/activate
+escenarios/escenario-6.sh
+escenarios/escenario-8.sh                                      # carga completa (100.000/2.000)
+escenarios/escenario-8.sh --proveedores 10000 --trabajos 500   # reducida, para depurar
+```
+
+El venv ya lo crea `user-data.sh` (paso 3) — no hay que instalar nada a mano.
+Los resultados quedan en `docs/resultados/`, igual que en local.
+
+## 6. Costo y apagado
 
 ≈ USD 0,17/h en `us-east-1` (t3.xlarge) → ≈ USD 4/día. **Se detiene cuando no
 se usa**:
@@ -120,7 +137,7 @@ docker compose stop
 cd infra/aws/terraform && terraform destroy -var="ssh_cidr=<TU-IP>/32"
 ```
 
-## 6. Sin secretos en el repositorio (RNF-6)
+## 7. Sin secretos en el repositorio (RNF-6)
 
 - `.env` se genera **en la instancia** (`user-data.sh`), nunca se commitea —
   está en `.gitignore` desde la raíz del repositorio.

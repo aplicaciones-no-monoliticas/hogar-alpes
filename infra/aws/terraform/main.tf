@@ -1,13 +1,19 @@
 # DEP-1 · Infraestructura como código — despliegue de Hogar de los Alpes en AWS.
 #
-# Una EC2 en la VPC por defecto de la región, con un security group que
-# expone solo lo que el plan técnico §6.2 pide (SSH restringido, 8000-8003
-# para las cuatro API) y `infra/aws/user-data.sh` como aprovisionamiento.
+# Una EC2 en una VPC propia (10.42.0.0/16, una subred pública), con un
+# security group que expone solo lo que el plan técnico §6.2 pide (SSH
+# restringido, 8000-8003 para las cuatro API) y `infra/aws/user-data.sh` como
+# aprovisionamiento.
+#
+# Por qué VPC propia y no la VPC "default" de la cuenta: algunas cuentas
+# (esta incluida) no tienen ninguna VPC por defecto — `data.aws_vpc.default`
+# falla con "no matching EC2 VPC found". Crear la VPC aquí hace el despliegue
+# independiente de ese detalle de la cuenta.
 #
 #   terraform init
-#   terraform apply
+#   terraform apply -var="ssh_cidr=<TU-IP>/32"
 #   ...
-#   terraform destroy    # tira todo abajo, limpio, cuando ya no se necesita
+#   terraform destroy -var="ssh_cidr=<TU-IP>/32"   # tira todo abajo, limpio, cuando ya no se necesita
 
 terraform {
   required_version = ">= 1.5"
@@ -40,6 +46,18 @@ variable "ssh_cidr" {
   type        = string
 }
 
+variable "ssh_public_key_path" {
+  description = <<-EOT
+    Ruta a la llave pública SSH que se registra como aws_key_pair para poder
+    entrar por SSH a la instancia (necesario para correr escenarios/*.sh a
+    mano, ver infra/aws/README.md §5). Generar una dedicada al proyecto:
+
+      ssh-keygen -t ed25519 -f ~/.ssh/hogar-alpes -C hogar-alpes -N ""
+  EOT
+  type        = string
+  default     = "~/.ssh/hogar-alpes.pub"
+}
+
 variable "exponer_pulsar_manager" {
   description = <<-EOT
     Abre el puerto 9527 (Pulsar Manager) a 0.0.0.0/0 — SOLO para la sesión de
@@ -59,13 +77,25 @@ variable "exponer_pulsar_manager" {
   default     = false
 }
 
-data "aws_vpc" "default" {
-  default = true
+variable "exponer_grafana" {
+  description = <<-EOT
+    Abre el puerto 3000 (Grafana) a 0.0.0.0/0 — SOLO para la sesión de
+    demo/sustentación, mismo patrón que exponer_pulsar_manager. Por defecto
+    false: la clave de admin es la de GRAFANA_PASSWORD (o el valor por
+    defecto de docker-compose.yml), y no hay razón para dejarla accesible
+    fuera de la demo.
+
+      terraform apply -var="exponer_grafana=true" -var="ssh_cidr=..."
+      # ... hacer la demo ...
+      terraform apply -var="exponer_grafana=false" -var="ssh_cidr=..."
+  EOT
+  type        = bool
+  default     = false
 }
 
 # No toda zona de disponibilidad ofrece todos los tipos de instancia (nos
 # pasó con t3.xlarge en us-east-1e) — se filtran las zonas donde el tipo
-# elegido SÍ está disponible, y de ahí se toma un subnet.
+# elegido SÍ está disponible, y ahí se crea la subred.
 data "aws_ec2_instance_type_offerings" "disponibles" {
   filter {
     name   = "instance-type"
@@ -74,18 +104,71 @@ data "aws_ec2_instance_type_offerings" "disponibles" {
   location_type = "availability-zone"
 }
 
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
+resource "aws_vpc" "hogar_alpes" {
+  cidr_block           = "10.42.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name     = "hogar-alpes"
+    Proyecto = "hogar-alpes"
   }
-  filter {
-    name   = "default-for-az"
-    values = ["true"]
+}
+
+resource "aws_subnet" "publica" {
+  vpc_id                  = aws_vpc.hogar_alpes.id
+  cidr_block              = "10.42.1.0/24"
+  availability_zone       = data.aws_ec2_instance_type_offerings.disponibles.locations[0]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name     = "hogar-alpes-publica"
+    Proyecto = "hogar-alpes"
   }
-  filter {
-    name   = "availability-zone"
-    values = data.aws_ec2_instance_type_offerings.disponibles.locations
+
+  # El orden de `locations` no es estable entre llamadas al API — sin esto,
+  # un `plan` cualquiera (incluso solo para abrir un puerto del security
+  # group) puede "descubrir" una zona distinta y forzar el reemplazo de la
+  # subred, la asociación de la route table y la instancia completa.
+  lifecycle {
+    ignore_changes = [availability_zone]
+  }
+}
+
+resource "aws_internet_gateway" "hogar_alpes" {
+  vpc_id = aws_vpc.hogar_alpes.id
+
+  tags = {
+    Name     = "hogar-alpes"
+    Proyecto = "hogar-alpes"
+  }
+}
+
+resource "aws_route_table" "publica" {
+  vpc_id = aws_vpc.hogar_alpes.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.hogar_alpes.id
+  }
+
+  tags = {
+    Name     = "hogar-alpes-publica"
+    Proyecto = "hogar-alpes"
+  }
+}
+
+resource "aws_route_table_association" "publica" {
+  subnet_id      = aws_subnet.publica.id
+  route_table_id = aws_route_table.publica.id
+}
+
+resource "aws_key_pair" "hogar_alpes" {
+  key_name   = "hogar-alpes"
+  public_key = file(pathexpand(var.ssh_public_key_path))
+
+  tags = {
+    Proyecto = "hogar-alpes"
   }
 }
 
@@ -106,7 +189,7 @@ data "aws_ami" "ubuntu" {
 resource "aws_security_group" "hogar_alpes" {
   name        = "hogar-alpes-sg"
   description = "Hogar de los Alpes - Entrega 4 (DEP-1)"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = aws_vpc.hogar_alpes.id
 
   ingress {
     description = "SSH desde el equipo"
@@ -156,10 +239,22 @@ resource "aws_security_group_rule" "pulsar_manager_demo" {
   description       = "Pulsar Manager - SOLO durante la demo (exponer_pulsar_manager=true)"
 }
 
+resource "aws_security_group_rule" "grafana_demo" {
+  count             = var.exponer_grafana ? 1 : 0
+  type              = "ingress"
+  security_group_id = aws_security_group.hogar_alpes.id
+  from_port         = 3000
+  to_port           = 3000
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  description       = "Grafana - SOLO durante la demo (exponer_grafana=true)"
+}
+
 resource "aws_instance" "hogar_alpes" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
-  subnet_id              = data.aws_subnets.default.ids[0]
+  subnet_id              = aws_subnet.publica.id
+  key_name               = aws_key_pair.hogar_alpes.key_name
   vpc_security_group_ids = [aws_security_group.hogar_alpes.id]
   user_data              = file("${path.module}/../user-data.sh")
 
@@ -183,6 +278,10 @@ output "public_ip" {
   value = aws_instance.hogar_alpes.public_ip
 }
 
+output "ssh" {
+  value = "ssh -i ${var.ssh_public_key_path == "~/.ssh/hogar-alpes.pub" ? "~/.ssh/hogar-alpes" : trimsuffix(var.ssh_public_key_path, ".pub")} ubuntu@${aws_instance.hogar_alpes.public_ip}"
+}
+
 output "urls" {
   value = {
     gestion_trabajos = "http://${aws_instance.hogar_alpes.public_ip}:8000/health"
@@ -195,4 +294,9 @@ output "urls" {
 output "pulsar_manager_url" {
   description = "Solo resuelve algo útil si exponer_pulsar_manager=true y el contenedor está arriba (docker compose --profile demo up -d pulsar-manager + infra/pulsar/pulsar-manager-setup.sh, por SSH)"
   value       = "http://${aws_instance.hogar_alpes.public_ip}:9527"
+}
+
+output "grafana_url" {
+  description = "Solo resuelve algo útil si exponer_grafana=true y el contenedor está arriba (docker compose --profile demo up -d prometheus grafana, por SSH)"
+  value       = "http://${aws_instance.hogar_alpes.public_ip}:3000"
 }

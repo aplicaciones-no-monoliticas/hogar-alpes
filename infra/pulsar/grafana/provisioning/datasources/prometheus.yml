@@ -1,0 +1,13 @@
+# Registra Prometheus como datasource automáticamente al arrancar — nada que
+# configurar a mano en la UI, a diferencia de Pulsar Manager (que sí lo exige,
+# porque no tiene API pública para eso).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
