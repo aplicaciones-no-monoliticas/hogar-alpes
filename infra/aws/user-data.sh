@@ -64,6 +64,12 @@ echo "== docker compose up -d =="
 # Compose distinto para "producción" (plan técnico §6.2).
 docker compose up -d
 
+# Este script corre como root (así funciona cloud-init/user-data), así que
+# todo lo de arriba — el clon, el venv, el .env — queda con dueño root:root.
+# Sin este chown, correr escenarios/*.sh por SSH como ubuntu falla con
+# "Permission denied" al primer `mkdir docs/resultados`.
+chown -R "${SUDO_USER:-ubuntu}:${SUDO_USER:-ubuntu}" "$DESTINO"
+
 echo "== Listo =="
 echo "Las cuatro API deberían responder en unos minutos en los puertos 8000-8003."
 echo "Ver infra/aws/README.md para el resto (security group, verificación, apagado)."
