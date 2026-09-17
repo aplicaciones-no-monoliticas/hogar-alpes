@@ -21,20 +21,26 @@ def manejar_comando(valor, mensaje):
     from ..aplicacion.comandos.solicitar_acreditacion import SolicitarAcreditacion
 
     if valor.tipo_comando == SOLICITAR:
-        ejecutar_comando(SolicitarAcreditacion(
+        acreditacion_id = ejecutar_comando(SolicitarAcreditacion(
             proveedor_id=valor.proveedor_id, pais=valor.pais, ciudad=valor.ciudad,
             categorias=list(valor.categorias), nivel=valor.nivel,
             vigencia_meses=valor.vigencia_meses, motivo=valor.motivo,
             acreditacion_id=valor.acreditacion_id,
         ))
+        logger.info(
+            'SOLICITAR proveedor_id=%s -> acreditacion_id=%s',
+            valor.proveedor_id, acreditacion_id,
+        )
     elif valor.tipo_comando == APROBAR:
         ejecutar_comando(AprobarAcreditacion(
             acreditacion_id=valor.acreditacion_id, motivo=valor.motivo,
         ))
+        logger.info('APROBAR acreditacion_id=%s', valor.acreditacion_id)
     elif valor.tipo_comando == REVOCAR:
         ejecutar_comando(RevocarAcreditacion(
             acreditacion_id=valor.acreditacion_id, motivo=valor.motivo,
         ))
+        logger.info('REVOCAR acreditacion_id=%s', valor.acreditacion_id)
     else:
         logger.warning('tipo_comando desconocido: %s', valor.tipo_comando)
 
