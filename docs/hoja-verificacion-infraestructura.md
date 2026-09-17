@@ -1,19 +1,5 @@
 # Hoja de verificación — infraestructura desplegada y flujo de eventos
 
-Chuleta de comandos para **verificar en vivo** (local o AWS) que la
-infraestructura está arriba y para **seguir un evento de punta a punta** por
-logs y por Pulsar, sin depender de ningún escenario formal. Pensada para una
-demo corta, para debug, o para retomar el sistema después de un tiempo.
-
-No reemplaza `docs/guion-demo.md` (guion narrado para grabar el video de
-sustentación) ni `docs/guia-scripts.md` (qué hace cada script). Esta hoja es
-el complemento operativo: comandos sueltos, agrupados por lo que quieres
-comprobar.
-
-Si es contra AWS: reemplaza `localhost` por la IP pública de la instancia
-(`terraform output urls` la imprime), y antepone `ssh <IP>` o corre los
-comandos ya conectado por SSH en `/opt/hogar-alpes`.
-
 ## Índice
 
 - [1. La infraestructura está arriba](#1-la-infraestructura-está-arriba)
