@@ -42,6 +42,7 @@ def manejar_evento_trabajo(valor, mensaje):
         pais=valor.pais,
         ciudad=valor.ciudad,
     ))
+    logger.info('evt-trabajo procesado: trabajo_id=%s region=%s', valor.trabajo_id, region())
 
 
 def manejar_evento_acreditacion(valor, mensaje):
@@ -59,6 +60,10 @@ def manejar_evento_acreditacion(valor, mensaje):
         vigente_hasta=valor.vigente_hasta,
         version=valor.version,
     ))
+    logger.info(
+        'evt-acreditacion procesado: proveedor_id=%s estado=%s version=%s',
+        valor.proveedor_id, valor.estado, valor.version,
+    )
 
 
 def suscribirse_regional(app):
