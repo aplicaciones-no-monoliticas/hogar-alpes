@@ -63,13 +63,16 @@ def crear_app(configuracion: dict | None = None) -> Flask:
     from .api import JsonEncoder
     from .api.salud import bp as bp_salud
     from .config.db import db
+    from .seedwork.infraestructura import correlacion
 
+    correlacion.instalar_registro()
     logging.basicConfig(
         level=os.getenv('LOG_LEVEL', 'INFO'),
-        format='%(levelname)s %(name)s | %(message)s',
+        format='%(levelname)s %(name)s | cid=%(correlation_id)s%(campos)s | %(message)s',
     )
 
     app = Flask(__name__, instance_relative_config=True)
+    correlacion.instalar_en_flask(app)
     app.json = JsonEncoder(app)
     app.secret_key = os.getenv('SECRET_KEY', 'dev')
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI', 'sqlite:///:memory:')

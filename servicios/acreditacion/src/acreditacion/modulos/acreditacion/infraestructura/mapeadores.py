@@ -5,6 +5,7 @@
   `AcreditacionActualizada` (carga de estado, `evt-acreditacion`).
 - `MapeadorAcreditacionExterno` — agregación -> `dict` para las respuestas HTTP.
 """
+from acreditacion.seedwork.infraestructura import correlacion
 from acreditacion.seedwork.infraestructura.schema.v1.mensajes import sobre
 
 from ..dominio.entidades import Acreditacion
@@ -37,7 +38,7 @@ class MapeadorAcreditacionIntegracion:
 
     def entidad_a_dto(self, evento):
         mensaje = AcreditacionActualizada(
-            **sobre(TIPO_ACTUALIZADA, 'acreditacion', correlation_id=evento.proveedor_id),
+            **sobre(TIPO_ACTUALIZADA, 'acreditacion', correlation_id=correlacion.actual()),
             acreditacion_id=str(evento.agregado_id),
             proveedor_id=evento.proveedor_id,
             pais=evento.pais,

@@ -1,20 +1,3 @@
-<!--
-SYNC IMPACT REPORT (temporal; eliminar antes de commitear)
-- Version change: (plantilla sin rellenar, sin version) -> 1.0.0
-- Principios modificados: ninguno renombrado; los 5 espacios de la plantilla se rellenaron y se
-  agrego un sexto principio (VI. Verificacion Honesta)
-    I.   Comunicacion Solo por Eventos
-    II.  Contratos con Esquema y Evolucion Compatible
-    III. Capas Separadas y Servicios Autonomos
-    IV.  Comportamiento Cambiable por Datos, No por Codigo
-    V.   Resiliencia por Diseno: Al-Menos-Una-Vez e Idempotencia
-    VI.  Verificacion Honesta (NON-NEGOTIABLE)
-- Secciones agregadas: Restricciones Tecnicas y de Despliegue; Flujo de Desarrollo y Puertas de Calidad
-- Secciones eliminadas: ninguna
-- Plantillas dependientes: no se modifican aqui; leen la constitucion en tiempo de ejecucion
-- TODOs diferidos: ninguno
-- Fuentes: README.md, docs/decisiones.md, docs/01-especificacion.md (RS-1..RS-6)
--->
 # Hogar de los Alpes Constitution
 
 ## Core Principles

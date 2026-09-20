@@ -6,6 +6,7 @@
 """
 import uuid
 
+from emparejamiento.seedwork.infraestructura import correlacion
 from emparejamiento.seedwork.infraestructura.schema.v1.mensajes import sobre
 
 from ..dominio.entidades import Emparejamiento
@@ -47,7 +48,7 @@ class MapeadorEmparejamientoIntegracion:
 
         if nombre == 'CandidatosIdentificados':
             mensaje = EventoEmparejamiento(
-                **sobre(TIPO_CANDIDATOS, 'emparejamiento', correlation_id=str(evento.trabajo_id)),
+                **sobre(TIPO_CANDIDATOS, 'emparejamiento', correlation_id=correlacion.actual()),
                 trabajo_id=str(evento.trabajo_id),
                 region=evento.region,
                 categoria=evento.categoria,
@@ -60,7 +61,7 @@ class MapeadorEmparejamientoIntegracion:
 
         if nombre == 'SinCandidatos':
             mensaje = EventoEmparejamiento(
-                **sobre(TIPO_SIN_CANDIDATOS, 'emparejamiento', correlation_id=str(evento.trabajo_id)),
+                **sobre(TIPO_SIN_CANDIDATOS, 'emparejamiento', correlation_id=correlacion.actual()),
                 trabajo_id=str(evento.trabajo_id),
                 region=evento.region,
                 categoria=evento.categoria,

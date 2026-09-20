@@ -22,7 +22,7 @@ class HandlerEmparejamientoIntegracion(Handler):
             topico_evt_emparejamiento(),
             MapeadorEmparejamientoIntegracion(),
             clave=str(evento.trabajo_id),
-            propiedades={'correlation_id': str(evento.trabajo_id), 'region': evento.region},
+            propiedades={'region': evento.region},
         )
 
 

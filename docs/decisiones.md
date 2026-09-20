@@ -494,3 +494,96 @@ Con GT-3 fusionado (ver la sección "GT-3 · Los eventos cruzan entre servicios 
 | `escenarios/escenario-6.sh` | `bash -n` (sintaxis) — **no** se corrió contra un clúster real: sigue sin haber Docker en este entorno |
 
 **Sigue pendiente** (igual que antes de esta simplificación): correr `escenario-6.sh` de punta a punta contra el sistema real y confirmar los seis criterios de aceptación.
+
+---
+
+## US-02 · BFF y trazabilidad por petición
+
+**Fecha:** 2026-09-20 · **Verificable con:** `python herramientas/verificar_aislamiento.py`, `bash escenarios/bff.sh` y `newman run postman/hogar-alpes-bff.postman_collection.json -e postman/bff-local.postman_environment.json`
+
+Especificación y diseño: `specs/001-bff-entry-point/`. Se recomienda enmendar el Principio I de la Constitución (versión MINOR) para nombrar al *componente de borde*, en un PR aparte; mientras tanto, las excepciones de abajo quedan justificadas por escrito, como exige la Gobernanza.
+
+### 1 · El BFF es un componente de borde, y eso exige dos excepciones escritas al Principio I
+
+`servicios/bff/` no es un servicio de dominio: no tiene base de datos, no habla con Pulsar y no guarda estado. Su trabajo es justamente hacer llamadas HTTP hacia adentro, y eso contradice la frase general «ningún servicio llama a otro por HTTP». Excepciones:
+
+| Excepción | Por qué es necesaria | Alternativa descartada |
+|---|---|---|
+| **El BFF hace HTTP hacia los servicios** | Un punto de entrada único y las consultas compuestas exigen llamadas síncronas hacia adentro. El propio código lo evitó antes: `GET /trabajos/{id}/seguimiento` se retiró de Gestión de Trabajos (GT-5) porque habría sido una llamada GT → OPS | *Que el BFF lea de una proyección alimentada por eventos*: obliga a darle base de datos y consumidor, justo lo que la historia prohíbe, y duplica la lógica de cada servicio. *No hacer compuestos*: es un simple *gateway* y no cumple el objetivo |
+| **La API de cada servicio comparte una red `red-bff-<svc>` con el BFF** (el Principio I dice «comparte red únicamente con el broker y con su propia base») | El BFF debe alcanzar la API de cada servicio. Una red por par (BFF + un solo servicio) evita que el BFF comparta red con el broker o con las bases | *Poner al BFF en `red-broker`*: lo acercaría al broker y a todos los servicios. *Sin redes por par*: el BFF no tendría ruta a los servicios |
+
+Los cinco servicios de dominio siguen sin poder hablarse entre sí. Ningún servicio adquiere un cliente HTTP ni una variable de entorno hacia otro servicio o hacia el BFF.
+
+### 2 · «No alcanzarse entre sí» significa no llamarse, no aislar la red
+
+La historia proponía comprobar que, desde un servicio, el nombre de otro no resuelve. **Esa comprobación no puede pasar y nunca pudo**: las API y los consumidores comparten `red-broker` y se resuelven por nombre (comprobado con Docker el 2026-09-19). El equipo aclaró que la regla del proyecto es *no comunicarse de forma síncrona*; compartir una red es aceptable. Por eso:
+
+- La topología existente **no se toca**.
+- La regla se verifica sobre el código y la configuración: `herramientas/verificar_aislamiento.py` (solo lectura) comprueba que ningún servicio de dominio tiene cliente HTTP ni literales `http(s)://`, que ninguna variable de entorno apunta a otro servicio o al BFF, que solo el BFF tiene variables `URL_*`, que cada `red-bff-*` tiene exactamente al BFF y a un servicio, y que el BFF no declara volúmenes, `DATABASE_URI`, `BROKER_HOST` ni `depends_on`.
+- Se corrigió `docs/hoja-verificacion-infraestructura.md` §6, que mostraba una llamada HTTP entre servicios con el comentario «falla: no comparten red». Era incorrecto. Se conservan las dos comprobaciones de bases de datos (`getent hosts postgres-<ajena>`), que sí son aislamiento de red.
+
+**Verificado (2026-09-20):** el verificador dio PASA en todos sus criterios (PENDIENTE solo para `red-bff-saga`, que tiene únicamente al BFF hasta que exista `saga-log`). Además se comprobó que **falla cuando debe**: se introdujo a propósito un `urllib`/`http://` en un servicio, una mención del BFF en un módulo de dominio, una copia divergente de `correlacion.py`, una variable de entorno hacia otro servicio, una tercera pertenencia a una red `red-bff-*` y un `depends_on` del BFF; el script reportó FALLA en cada caso (y se restauró todo). Con el sistema levantado: `docker compose exec bff getent hosts broker-1` y `... postgres-trabajos` terminan con código 2 (no resuelven), y `gestion-trabajos → postgres-acreditacion` también.
+
+### 3 · El identificador de correlación viaja por el borde, no por el dominio
+
+Un `ContextVar` (`seedwork/infraestructura/correlacion.py`) se fija al entrar —cabecera `X-Correlation-Id` de una petición HTTP o campo/propiedad del mensaje consumido— y lo leen tres lugares: el despachador (propiedades del mensaje), los mapeadores (campo del sobre, vía `correlacion.actual()`) y una fábrica de registros de `logging` (`cid=` en cada línea). Es posible sin pasarlo por el dominio porque la Unidad de Trabajo despacha los eventos de integración de forma síncrona en el mismo hilo que atendió la petición o el mensaje.
+
+- El archivo es **idéntico byte a byte** en seis copias (plantilla, cuatro servicios y BFF), por `TO-7`; el verificador lo comprueba por SHA-256.
+- Ningún comando, evento de dominio, entidad ni tabla gana un campo; el verificador comprueba que `correlation`/`correlacion` no aparece en `dominio/` ni en ningún `dto.py`.
+- **No es la clave de partición.** La clave sigue siendo el `trabajo_id` (`proveedor_id` en Acreditación) y viaja como argumento `partition_key`; el identificador viaja en el sobre y en las propiedades, que Pulsar no usa para enrutar. `contratos/` y `sobre()` no cambian (los `schema/v1/mensajes.py` siguen idénticos a `contratos/v1/mensajes.py`).
+- Regla general: si llega una petición o un mensaje sin identificador válido (forma `[A-Za-z0-9._:-]{1,64}`), quien lo recibe crea uno. **Consecuencia observada:** un mensaje sin identificador consumido por dos suscripciones queda con dos identificadores distintos, uno por receptor; cada uno lo propaga desde ahí.
+- Para seguir **la vida de un trabajo** entre peticiones (cada petición tiene su propio `cid=`), las líneas de registro que tocan un trabajo llevan además `trabajo_id=<id>` (campos de registro genéricos: el módulo no nombra ningún dominio, cada servicio pasa el nombre del campo). En Operaciones y Emparejamiento el argumento de ruta se llama `trabajo_id`, no `id`, y `campos_ruta` debe llamarse así o no escribe nada.
+
+**Verificado (2026-09-20, sistema real):** una sola búsqueda del `correlation_id` devuelto por `POST /trabajos` recorre `bff`, `gestion-trabajos`, `operaciones-consumidor` y `emparejamiento-andina` en orden de marca de tiempo; el mismo valor está en las propiedades **y** en el sobre Avro de un mensaje real de `evt-trabajo-andina`, `evt-emparejamiento` y `evt-acreditacion`; los tres mensajes de un trabajo (creación y dos cambios de estado) cayeron en **una sola** partición de `evt-trabajo-andina`; una llamada directa a Gestión de Trabajos sin cabecera quedó identificada; un mensaje publicado sin `correlation_id` quedó identificado por Operaciones y por Emparejamiento, y el que Emparejamiento publicó después lleva el suyo.
+
+### 4 · `502` cuando un servicio responde `5xx`
+
+La historia solo prevé `503` (no responde). Si un servicio responde con un error interno, el BFF **no reenvía su cuerpo** (podría ser una página HTML o una traza) y responde `502` con `servicio` y `status_upstream`. Se separa de `503` porque se diagnostican distinto: «no responde» frente a «responde mal».
+
+### 5 · Puerto `8090`
+
+La historia propone `8080`, que ya publica `broker-1`. El BFF usa `${PUERTO_BFF:-8090}`. Se registró la regla de entrada del puerto en `infra/aws/terraform/main.tf` (`terraform validate` correcto; `terraform apply` no se ejecutó).
+
+### 6 · `{id}` de `/proveedores/{id}/completo` es el id de la acreditación
+
+`GET /acreditaciones/{id}` busca por el id de la acreditación, no por `proveedor_id` (son UUID distintos). La respuesta incluye `proveedor_id`.
+
+### 7 · La primera petición de la colección de la Entrega 4 es la única excepción a «solo cambiar la dirección»
+
+`GET /health` de esa colección afirma `service == 'gestion-trabajos'`. El BFF responde con el **suyo** (necesario para balanceadores y Kubernetes), así que esa petición se excluye. Todas las demás carpetas corren contra el BFF cambiando solo la dirección base: **17 peticiones, 35 aserciones, 0 fallos** (2026-09-20), incluidas las que esperan que Operaciones abra el seguimiento por Pulsar. Esa colección solo cubre Trabajos y Operaciones, así que la fidelidad del reenvío de Acreditación y Emparejamiento la prueban `tests/test_reenvio.py` y las carpetas 2 y 3 de la colección nueva.
+
+### 8 · El BFF no nace de copiar toda la plantilla (Principio III)
+
+La plantilla trae seedwork de dominio, SQLAlchemy, Pulsar y un proceso consumidor; el BFF no puede tener nada de eso. Se parte de su esqueleto (`Dockerfile`, fábrica, `/health`, `pytest.ini`) y solo se copia `correlacion.py`.
+
+### 9 · `correlation_id` deja de ser `trabajo_id`/`proveedor_id` y pasa a ser un identificador por petición, **sin** `-v2`
+
+`RS-4` exige un stream nuevo ante un «cambio de significado». No aplica: el campo conserva su tipo y su función (correlacionar, `TO-4`), su definición no cambia (`String(default=None, required_default=True)`) y ningún consumidor depende de que valga el id del trabajo.
+
+**Evidencia** (`grep -rn "correlation_id" servicios/ escenarios/ herramientas/ contratos/`, 2026-09-20): todas las coincidencias son definiciones del campo en los contratos, escrituras (`sobre(...)`, mapeadores, despachadores), el formato de registro, herramientas que **publican** con él (`generador_carga.py`, `cargar_acreditaciones.py`, `esquemas.py`) o un `print` de depuración en `verificar_contratos.py`. **Ningún código de negocio lo lee.**
+
+**Costo aceptado:** el ciclo de vida de un trabajo ya no comparte un único identificador entre peticiones; cada petición abre su propia cadena. Se mitiga con `trabajo_id=` en los registros (punto 3).
+
+**Restricción para US-01:** la saga **no** debe usar `correlation_id` como clave del trabajo; usa `trabajo_id`. Un servicio nuevo debe nacer de la plantilla ya actualizada y declarar su `campos_ruta`.
+
+### Hallazgos de la implementación que conviene dejar dicho
+
+- **El tiempo límite no cubría la resolución del nombre.** Con `saga-log` inexistente, `getaddrinfo` tardaba 4–8 s en Docker (el DNS interno reenvía hacia afuera el nombre que no conoce) y `GET /estado-del-sistema` respondía en ~8 s pese a `TIMEOUT_COMPUESTO_S=1.5`. Se acotó la resolución con un hilo por llamada: ahora el compuesto responde en ~1.5 s y hay pruebas (`test_un_dns_lento_no_pasa_del_tiempo_limite_*`). Afecta también a un servicio detenido, cuyo nombre deja de resolver.
+- **En Windows, `infra/pulsar/*.sh` se descargan con CRLF** (por `core.autocrlf`) y `pulsar-config` falla dentro del contenedor (`$'\r': command not found`), por lo que nunca se crean el *tenant*, los *namespaces* ni los tópicos y los servicios publican con `TopicNotFound`. No es de esta entrega, pero bloquea un arranque en frío en esa plataforma. Se resolvió a mano ejecutando el script sobre una copia sin `\r`; conviene fijar `*.sh text eol=lf` en un `.gitattributes`.
+- **`herramientas/verificar_contratos.py`** verifica bien la parte estructural (regla de INF-0, sobre completo) pero su ida y vuelta usa tópicos ad hoc de `public/default`, y estos brokers tienen `allowAutoTopicCreation: false`: da `TopicNotFound`. No lo causa este cambio (`contratos/` no se tocó) y queda pendiente.
+- En Windows, conectar a un puerto cerrado tarda ~2 s en fallar con «rechazada»; las pruebas del BFF usan un tiempo límite por defecto de 3 s para no confundirlo con un `TIMEOUT`.
+
+### Verificación ejecutada (2026-09-20)
+
+| Qué | Resultado |
+|---|---|
+| `pytest` `servicios/bff` | 110 pruebas en verde (servidores HTTP falsos reales; sin base de datos ni Pulsar) |
+| `pytest` `gestion_trabajos` · `operaciones` · `acreditacion` · `emparejamiento` | 68 · 31 · 31 · 32 en verde (antes: 12 · 20 · 19 · 16) |
+| `python herramientas/verificar_aislamiento.py` | PASA en todos; PENDIENTE solo `red-bff-saga` |
+| `bash escenarios/bff.sh` (secciones US1, US2, US3) | Sin fallos; PENDIENTE lo que depende de `saga-log` |
+| `newman` de la Entrega 4 contra el BFF | 17 peticiones, 35 aserciones, 0 fallos |
+| `newman` de la colección del BFF (carpetas 0–6, 8, 9) | 42 peticiones, 97 aserciones, 0 fallos; con `sagasDisponibles=true` la carpeta de sagas se pone en rojo, como debe |
+| `terraform validate` | Correcto |
+| Regresión de la Entrega 4 (la publicación y el consumo de todos los servicios cambiaron) | `escenario-6`: backlog creciente, 350/350 seguimientos, 0 duplicados, 0 huérfanos y suscripciones aisladas en PASA; p95 de `POST /trabajos` 185 ms con el consumidor detenido frente a 173 ms de línea base y 0 % de errores (medido aparte: la medición del propio script no pudo leerse por rutas MSYS en Windows). `escenario-8` reducido: CA-8.1, 8.2 y 8.3 PASA; CA-8.4 no verificable aquí (`agregar-region.sh` viene con CRLF). `mod-2` y `mod-3` PASA. `mod-1.sh` FALLA por dos supuestos previos a esta entrega (un commit histórico y una carpeta de Postman que no corre); a mano, el adaptador en memoria pasa los escenarios 2 y 3 (28 aserciones, 0 fallos). `esquemas.py` y `verificar_contratos.py` (ida y vuelta): `TopicNotFound` por la creación automática de tópicos desactivada. Ninguno se debe al BFF ni a la correlación |
+
+**Pendiente:** todo lo que depende de US-01 (carpetas 5 y 7 de Postman con `saga-log` real, paso `saga-log` de la búsqueda de una saga, CA-2.25 y CA-2.26); `bff-aws` (requiere desplegar en AWS).

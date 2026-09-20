@@ -69,13 +69,16 @@ def _crear_tablas(bases, engine):
 def crear_app(configuracion=None):
     from gestion_trabajos.api import JsonEncoder
     from gestion_trabajos.config.db import db
+    from gestion_trabajos.seedwork.infraestructura import correlacion
 
+    correlacion.instalar_registro()
     logging.basicConfig(
         level=os.getenv('LOG_LEVEL', 'INFO'),
-        format='%(levelname)s %(name)s | %(message)s',
+        format='%(levelname)s %(name)s | cid=%(correlation_id)s%(campos)s | %(message)s',
     )
 
     app = Flask(__name__, instance_relative_config=True)
+    correlacion.instalar_en_flask(app, campos_ruta={'id': 'trabajo_id'})
     app.json = JsonEncoder(app)
     app.secret_key = os.getenv('SECRET_KEY', 'dev')
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(

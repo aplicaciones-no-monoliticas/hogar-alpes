@@ -13,6 +13,7 @@ import logging
 import pulsar
 
 from gestion_trabajos.config.topicos import SUSCRIPCION_COMANDOS, patron_cmd_trabajo
+from gestion_trabajos.seedwork.infraestructura import correlacion
 from gestion_trabajos.seedwork.infraestructura.consumidores import correr
 
 from .schema.v1.comandos import ComandoCrearTrabajo
@@ -29,6 +30,7 @@ def _manejar_crear_trabajo(valor, mensaje):
 
     from ..aplicacion.comandos.crear_trabajo import CrearTrabajo
 
+    correlacion.agregar_campos(trabajo_id=valor.trabajo_id)
     logger.info('Comando recibido: trabajo_id=%s', valor.trabajo_id)
 
     ejecutar_comando(CrearTrabajo(

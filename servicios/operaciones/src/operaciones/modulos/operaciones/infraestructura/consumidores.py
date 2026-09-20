@@ -23,6 +23,7 @@ import logging
 
 from operaciones.config.topicos import SUSCRIPCION, patron_evt_trabajo
 from operaciones.seedwork.aplicacion.comandos import ejecutar_comando
+from operaciones.seedwork.infraestructura import correlacion
 
 from .schema.v1.evt_trabajo import TIPO_CREADO, TIPO_ESTADO_CAMBIADO, EventoTrabajo
 
@@ -33,6 +34,7 @@ def manejar_evento_trabajo(valor, mensaje):
     from ..aplicacion.comandos.abrir_seguimiento import AbrirSeguimiento
     from ..aplicacion.comandos.registrar_cambio_estado import RegistrarCambioEstado
 
+    correlacion.agregar_campos(trabajo_id=valor.trabajo_id)
     if valor.type == TIPO_CREADO:
         resultado = ejecutar_comando(AbrirSeguimiento(
             evento_id=valor.id,

@@ -25,7 +25,6 @@ class HandlerAcreditacionIntegracion(Handler):
             topico_evt_acreditacion(),
             MapeadorAcreditacionIntegracion(),
             clave=evento.proveedor_id,
-            propiedades={'correlation_id': evento.proveedor_id},
         )
 
 

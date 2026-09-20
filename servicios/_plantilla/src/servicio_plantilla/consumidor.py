@@ -17,6 +17,7 @@ import pulsar
 from pulsar.schema import AvroSchema
 
 from .config.broker import cliente
+from .seedwork.infraestructura import correlacion
 
 logger = logging.getLogger(__name__)
 
@@ -53,16 +54,26 @@ def correr(
 
             while True:
                 mensaje = consumidor.receive()
+                valor, error_de_decodificacion = None, None
                 try:
-                    if app is not None:
-                        with app.app_context():
-                            manejar(mensaje.value(), mensaje)
-                    else:
-                        manejar(mensaje.value(), mensaje)
-                    consumidor.acknowledge(mensaje)
-                except Exception:
-                    logger.exception('Error procesando el mensaje; se reentregará')
-                    consumidor.negative_acknowledge(mensaje)
+                    valor = mensaje.value()
+                except Exception as error:
+                    error_de_decodificacion = error
+                # Todo lo que sigue —el handler, el error y el rechazo— ocurre dentro del
+                # contexto de correlación del mensaje, para que cada línea lleve su `cid`.
+                with correlacion.contexto(correlacion.desde_mensaje(valor, mensaje)):
+                    try:
+                        if error_de_decodificacion is not None:
+                            raise error_de_decodificacion
+                        if app is not None:
+                            with app.app_context():
+                                manejar(valor, mensaje)
+                        else:
+                            manejar(valor, mensaje)
+                        consumidor.acknowledge(mensaje)
+                    except Exception:
+                        logger.exception('Error procesando el mensaje; se reentregará')
+                        consumidor.negative_acknowledge(mensaje)
 
         except Exception:
             logger.exception(
@@ -78,9 +89,10 @@ def correr(
 
 def main():
     """Cada servicio reemplaza esta función declarando a qué se suscribe."""
+    correlacion.instalar_registro()
     logging.basicConfig(
         level=os.getenv('LOG_LEVEL', 'INFO'),
-        format='%(levelname)s %(name)s | %(message)s',
+        format='%(levelname)s %(name)s | cid=%(correlation_id)s%(campos)s | %(message)s',
     )
     raise SystemExit(
         'Este servicio todavía no declara su suscripción: implemente main() en consumidor.py'

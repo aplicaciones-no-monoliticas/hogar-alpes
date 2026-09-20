@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from gestion_trabajos.seedwork.dominio.repositorios import Mapeador
+from gestion_trabajos.seedwork.infraestructura import correlacion
 from gestion_trabajos.seedwork.infraestructura.utils import unix_time_millis
 
 from ..dominio.entidades import SubTrabajo, Trabajo
@@ -99,9 +100,9 @@ class MapeadorEventosTrabajo(Mapeador):
             type=tipo,
             datacontenttype='application/avro',
             service_name='gestion-trabajos',
-            # El identificador del trabajo correlaciona todo su ciclo de vida a
-            # través de los servicios (TO-4).
-            correlation_id=str(evento.trabajo_id),
+            # Identificador de la petición que originó el evento (TO-4), no el del
+            # trabajo: el trabajo ya viaja en `trabajo_id` y en la clave de partición.
+            correlation_id=correlacion.actual(),
         )
 
     def entidad_a_dto(self, evento):
