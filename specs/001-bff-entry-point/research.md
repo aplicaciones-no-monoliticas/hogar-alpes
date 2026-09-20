@@ -128,7 +128,7 @@ En los handlers y mapeadores se **elimina** la correlación derivada del dominio
 | Módulo compartido entre servicios | Contra TO-7 (seedwork duplicado a propósito); se mitiga con verificación de copias idénticas |
 | Cambiar la clave de partición | Prohibido por FR-031; el despachador ya recibe `clave` y `propiedades` como argumentos separados |
 
-**Registro (observabilidad)**: formato `%(levelname)s %(name)s | cid=%(correlation_id)s | %(message)s`. Se usa `setLogRecordFactory` (y no un `Filter` en un `Handler`) porque cubre **todos** los registros del proceso, incluidos los de bibliotecas y los de hilos que se crean después. Orden: `docker compose logs --no-color -t | grep -F <id> | sort -t'|' -k2` (las marcas ISO-8601 de Docker ordenan lexicográficamente). Límite conocido: el orden entre contenedores depende de que compartan reloj (mismo host en Compose; en Kubernetes conviene un agregador que ordene por tiempo).
+**Registro (observabilidad)**: formato `%(levelname)s %(name)s | cid=%(correlation_id)s%(campos)s | %(message)s` (`campos` = ` trabajo_id=<id>` cuando el borde lo fijó, FR-028b). Se usa `setLogRecordFactory` (y no un `Filter` en un `Handler`) porque cubre **todos** los registros del proceso, incluidos los de bibliotecas y los de hilos que se crean después. Orden: `docker compose logs --no-color -t | grep -F <id> | sort -t'|' -k2` (las marcas ISO-8601 de Docker ordenan lexicográficamente). Límite conocido: el orden entre contenedores depende de que compartan reloj (mismo host en Compose; en Kubernetes conviene un agregador que ordene por tiempo).
 
 ## R7 · Aislamiento entre servicios y redes (H1) — **decidido: la topología existente no cambia**
 

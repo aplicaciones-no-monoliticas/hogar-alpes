@@ -32,6 +32,7 @@ Repositorio: `aplicaciones-no-monoliticas/hogar-alpes`.
 |---|---|---|---|
 | Acreditación y Emparejamiento | ACR-1…5, EMP-1…5 | [#7](../../pull/7) | `e54852d` `a4bac89` |
 | Herramientas de medición y escenario 8 | HER-2, HER-3, ESC-8 | [#7](../../pull/7) | `04f219c` `7bdc6ff` |
+| Entrega 5 · actividad (b): BFF (punto de entrada único), endpoints compuestos, identificador de correlación en los cinco servicios, colección de Postman del BFF, `escenarios/bff.sh` y `verificar_aislamiento.py` | US-02 (`specs/001-bff-entry-point/`) | rama `add_bff` — **pendiente de PR desde su cuenta** | **por completar**: aún sin *commits* (los enlaces se agregan cuando existan; no se inventan) |
 
 ---
 

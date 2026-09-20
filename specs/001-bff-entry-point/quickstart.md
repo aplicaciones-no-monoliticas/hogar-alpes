@@ -2,7 +2,7 @@
 
 **Feature**: `001-bff-entry-point` · Guía de **validación**, no de implementación. Los detalles de diseño están en [contracts/](contracts/) y [data-model.md](data-model.md).
 
-> **Estado**: escrita durante la planificación; los comandos marcados *(por confirmar)* se ajustan al implementar. Nada de lo de abajo se ha ejecutado todavía contra el BFF, porque aún no existe. Lo que se ejecutó en la planificación fue el experimento de redes de `research.md` R7.
+> **Estado**: ejecutada de punta a punta el 2026-09-20 contra el sistema levantado con Docker (Windows + Git Bash). Los resultados están en `docs/decisiones.md` (sección «US-02»). Queda **pendiente** lo que depende de US-01 (`saga-log`) y de AWS, y se marca donde aparece. En Windows hay dos tropiezos ajenos a esta entrega, descritos en el §2 y el §8.
 
 ## 0. Prerrequisitos
 
@@ -23,11 +23,11 @@ for s in gestion_trabajos operaciones acreditacion emparejamiento; do (cd servic
 # dominio/tablas; BFF sin BD/Pulsar/volúmenes; 6 copias idénticas de correlacion.py
 python herramientas/verificar_aislamiento.py
 
-# Los contratos no deben haber cambiado de forma
-python herramientas/verificar_contratos.py        # necesita el broker (ver su cabecera)
+# Los contratos no deben haber cambiado de forma (`contratos/` no se toca en esta entrega)
+BROKER_URL=pulsar://localhost:6650 BROKER_LISTENER=external python herramientas/verificar_contratos.py
 ```
 
-**Esperado**: todo en verde; `verificar_aislamiento.py` imprime PASA por criterio (CA-2.3, 2.13, 2.21, copias idénticas).
+**Esperado**: todo en verde; `verificar_aislamiento.py` imprime PASA por criterio (CA-2.3, 2.13, 2.21, copias idénticas) y PENDIENTE solo para `red-bff-saga`. `verificar_contratos.py` pasa sus dos comprobaciones estructurales; su ida y vuelta da `TopicNotFound` porque este `docker-compose.yml` desactiva la creación automática de tópicos y el script usa tópicos ad hoc (no lo causa esta entrega).
 
 ## 2. Levantar el sistema desde cero
 
@@ -38,12 +38,18 @@ curl -s http://localhost:8090/health        # {"status":"up","service":"bff"}
 
 **Esperado**: el BFF responde sin configuración manual (CA-2.1) y arranca aunque algún servicio de atrás no esté listo (sin `depends_on`).
 
+> **Windows**: con `core.autocrlf` los scripts de `infra/pulsar/*.sh` se descargan con CRLF y `pulsar-config` falla dentro del contenedor (`$'\r': command not found`): nunca se crean los tópicos y los servicios publican con `TopicNotFound`. Si pasa, ejecutar el script sobre una copia sin `\r` (o fijar `*.sh text eol=lf` en `.gitattributes` y volver a descargar):
+>
+> ```bash
+> docker compose run --rm --no-deps pulsar-config bash -c 'cp -r /infra /tmp/infra && sed -i "s/\r$//" /tmp/infra/*.sh /tmp/infra/*.env && bash /tmp/infra/inicializar.sh'
+> ```
+
 ## 3. Sin comunicación síncrona entre servicios (CA-2.12, CA-2.13)
 
 La regla es que los servicios de dominio **no se llaman por HTTP** y solo se comunican por eventos de Pulsar; que compartan red no importa. Por eso la comprobación es sobre el código y la configuración, no sobre la resolución de nombres:
 
 ```bash
-python herramientas/verificar_aislamiento.py     # (por confirmar) PASA/FALLA por criterio; lee docker compose config
+python herramientas/verificar_aislamiento.py     # PASA/FALLA/PENDIENTE por criterio; lee docker compose config
 ```
 
 Debe dar PASA en:
@@ -129,16 +135,20 @@ curl -si -H 'X-Correlation-Id: mi-id-de-prueba' $BFF/health | grep -i x-correlat
 curl -si -H 'X-Correlation-Id: con espacios y | raros' $BFF/health | grep -i x-correlation-id # inválido: lo reemplaza
 ```
 
-**En el broker** (CA-2.19, *por confirmar*): consumir con una suscripción temporal y ver `properties` y el sobre.
+**En el broker** (CA-2.19): con una suscripción temporal creada **antes** de la petición (así el primer mensaje es el suyo), ver `properties` y el sobre.
 
 ```bash
-docker compose exec broker-1 bin/pulsar-client consume \
-  persistent://hogar-alpes/trabajos/evt-trabajo-andina -s verif-cid -n 5 -p Earliest
-# esperado: properties incluye correlation_id=$CID y el sobre lleva el mismo valor
-docker compose exec broker-1 bin/pulsar-admin topics unsubscribe persistent://hogar-alpes/trabajos/evt-trabajo-andina -s verif-cid
+T=persistent://hogar-alpes/trabajos/evt-trabajo-andina
+docker compose exec -T broker-1 bin/pulsar-admin topics create-subscription $T -s verif-cid --messageId latest
+# ... crear el trabajo por el BFF y guardar CID ...
+docker compose exec -T broker-1 bin/pulsar-client consume $T -s verif-cid -n 1
+# esperado: key:[<trabajo_id>], properties:[... correlation_id=$CID ...] y $CID también dentro del contenido (el sobre)
+docker compose exec -T broker-1 bin/pulsar-admin topics unsubscribe $T -s verif-cid
 ```
 
-**Clave de partición intacta** (CA-2.20): prueba unitaria (`partition_key == '<trabajo_id>'`) y `bash escenarios/escenario-8.sh` sin modificaciones.
+Lo mismo con `persistent://hogar-alpes/emparejamiento/evt-emparejamiento` y `persistent://hogar-alpes/acreditacion/evt-acreditacion` (la clave de este último es `proveedor_id`). `escenarios/bff.sh` lo hace por los tres tópicos.
+
+**Clave de partición intacta** (CA-2.20): prueba unitaria (`partition_key == '<trabajo_id>'`), `bash escenarios/bff.sh` (los tres mensajes de un trabajo caen en **una** partición, comparando `partitioned-stats --per-partition` antes y después) y `bash escenarios/escenario-8.sh` sin modificaciones.
 
 **Sin pasar por el BFF** (CA-2.22): llamar directo a un servicio (`curl -i localhost:8000/trabajos …`) y comprobar que el `X-Correlation-Id` devuelto existe y aparece en sus logs; `escenarios/bff.sh` también publica un mensaje con el campo vacío.
 
@@ -162,3 +172,5 @@ python escenarios/esquemas.py
 ```
 
 Los resultados quedan en `docs/resultados/` (no se versiona). Lo que no se pueda ejecutar se anota como **pendiente**.
+
+> **Windows**: estos scripts se descargan con CRLF y no corren tal cual bajo Git Bash. Se ejecutaron sobre copias sin `\r` (`tr -d '\r' < escenarios/x.sh > escenarios/_tmp-x.sh`, con un `python3` que apunte a un Python 3.11 con las dependencias de los servicios; borrar la copia al terminar). Resultado del 2026-09-20: `escenario-6` (backlog, sin duplicados ni desorden y aislamiento: PASA; su medición de latencia no pudo leerse por rutas MSYS, así que el p95 se midió aparte con `medir_latencia.py`: 185 ms con el consumidor detenido frente a 173 ms de línea base, 0 % de errores), `escenario-8` (CA-8.1, 8.2 y 8.3 PASA; CA-8.4 no verificable aquí porque `infra/pulsar/agregar-region.sh` también viene con CRLF), `mod-2` y `mod-3` PASA. `mod-1.sh` da FALLA por dos supuestos previos a esta entrega (su primer criterio mira un commit histórico de `crear_trabajo.py`, y sus carpetas de `newman` dependen de `trabajoId`, que fija una carpeta que no corre); ejecutado a mano con esa carpeta incluida, el adaptador en memoria pasa las carpetas de los escenarios 2 y 3 (28 aserciones, 0 fallos). `esquemas.py` da `TopicNotFound` por la creación automática de tópicos desactivada. Nada de esto se debe al BFF ni a la correlación.

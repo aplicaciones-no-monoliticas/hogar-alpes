@@ -21,6 +21,31 @@ llamadas directas (HTTP): todo lo que se avisan entre sí viaja por
 
 ---
 
+## El BFF: un solo punto de entrada
+
+Además de los servicios de dominio hay un componente de **borde**, `bff`
+(`servicios/bff/`), que es la puerta por la que pueden entrar los clientes:
+
+- **Por qué existe.** Quien usa o prueba el sistema no debería tener que saber
+  en qué puerto vive cada servicio. Con el BFF hace todas las peticiones contra
+  **una sola dirección** (`http://localhost:8090`), y las consultas que antes
+  exigían cuatro llamadas —por ejemplo «¿cómo va este trabajo?»
+  (`GET /trabajos/{id}/completo`)— se resuelven con una.
+- **Trazabilidad.** El BFF crea un código único por petición
+  (`X-Correlation-Id`), lo devuelve en toda respuesta y todos los servicios lo
+  copian en sus mensajes y en sus registros: una sola búsqueda en los registros
+  reconstruye lo que le pasó a una petición.
+- **Es una puerta adicional, no obligatoria.** **Sigue siendo válido llamar
+  directo a cada servicio** (8000–8003), y así es como se miden los escenarios
+  de calidad. El BFF no tiene base de datos, no habla con Pulsar y no guarda
+  estado; los servicios de dominio siguen sin llamarse entre sí, y solo el BFF
+  hace llamadas HTTP hacia adentro.
+
+Rutas, respuestas compuestas, configuración y cómo seguir una petición por los
+registros: [`servicios/bff/README.md`](servicios/bff/README.md).
+
+---
+
 ## Escenarios de calidad a probar
 
 El proyecto debe demostrar que el sistema cumple con estas cinco propiedades:
@@ -39,7 +64,7 @@ El proyecto debe demostrar que el sistema cumple con estas cinco propiedades:
 
 ```
 hogar-alpes/
-├── servicios/          código de los cuatro microservicios
+├── servicios/          código de los cuatro microservicios y del BFF (punto de entrada)
 ├── contratos/            la forma de los mensajes que viajan entre servicios
 ├── infra/                configuración de la mensajería y del despliegue
 ├── escenarios/           scripts para poner a prueba cada escenario de calidad
@@ -175,6 +200,7 @@ dice si cada métrica se cumplió o no.
 | `mod-3.sh` | Agrega un estado nuevo al ciclo de vida de un trabajo, redespliega solo Gestión de Trabajos, y comprueba que Operaciones y Emparejamiento siguen funcionando sin reiniciarse |
 | `escenario-6.sh` | Detiene Operaciones, genera trabajos durante varios minutos y, al reactivarlo, comprueba que procesó todo lo acumulado sin perder ni repetir nada |
 | `escenario-8.sh` | Carga miles de acreditaciones y de trabajos, agrega más copias de Emparejamiento y una región nueva, y mide si las consultas y el procesamiento se mantienen rápidos |
+| `bff.sh` | Con el sistema levantado, comprueba el BFF: detiene un servicio de verdad y verifica el `503` y que los demás siguen; reconstruye una petición con una sola búsqueda en los registros de todos los servicios; inspecciona mensajes reales del broker; y confirma que la clave de partición no cambió |
 | `esquemas.py` | Agrega un campo nuevo a un mensaje y comprueba que el sistema lo acepta; luego intenta un cambio incompatible y comprueba que el sistema lo rechaza |
 
 Al terminar, cada script deja un archivo en `docs/resultados/` con el

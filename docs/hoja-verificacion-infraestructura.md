@@ -212,7 +212,12 @@ docker compose logs --since 30m | grep -iE "error|exception|reentregará"
 
 ---
 
-## 6. Aislamiento de red y de datos (que no es solo palabra)
+## 6. Aislamiento de datos (de red) y entre servicios (de código)
+
+Son dos garantías distintas y se comprueban de forma distinta.
+
+**Las bases de datos sí se aíslan por red.** Cada servicio solo comparte red con
+la suya:
 
 ```bash
 # Gestión de Trabajos ni siquiera puede RESOLVER la base de Acreditación
@@ -220,10 +225,25 @@ docker compose exec gestion-trabajos getent hosts postgres-acreditacion   # fall
 
 # Cada servicio solo ve su propia base de datos
 docker compose exec gestion-trabajos getent hosts postgres-trabajos       # sí resuelve
+```
 
-# Ningún servicio de aplicación puede llamar directo a otra API por HTTP
-# interno — todo pasa por el broker, nunca por red de aplicación a aplicación
-docker compose exec gestion-trabajos python3 -c "import urllib.request; urllib.request.urlopen('http://operaciones:5000/health', timeout=2)"  # falla: no comparten red
+**Los servicios entre sí NO se aíslan por red, sino por código.** Las API y los
+consumidores comparten `red-broker` y se resuelven por nombre; eso es
+aceptable, porque la regla del proyecto es que ningún servicio de dominio llama
+a otro por HTTP y solo se comunican por eventos de Pulsar. La garantiza el
+código (ningún servicio de dominio tiene un cliente HTTP ni una variable de
+entorno que apunte a otro servicio) y se comprueba con:
+
+```bash
+python herramientas/verificar_aislamiento.py
+```
+
+Solo el BFF (`servicios/bff/`) llama por HTTP hacia adentro; no está en
+`red-broker` ni en ninguna red de base de datos:
+
+```bash
+docker compose exec bff getent hosts broker-1            # falla: el BFF no resuelve el broker
+docker compose exec bff getent hosts postgres-trabajos   # falla: ni las bases de datos
 ```
 
 ---

@@ -16,14 +16,15 @@ Desde GT-2, cada evento viaja con:
 
 - **clave de partición** `trabajo_id`: es lo que preserva el orden por trabajo
   cuando el tópico se particiona (escenario 8);
-- **propiedades** `partner_id`, `region` y `correlation_id`, legibles sin
-  deserializar el mensaje. La correlación mitiga `TO-4`: en un sistema
-  distribuido, sin ella un incidente es inauditable.
+- **propiedades** `partner_id` y `region`, legibles sin deserializar el
+  mensaje. El `correlation_id` (`TO-4`) lo agrega el despachador desde el
+  contexto de la petición: no pasa por aquí ni por el dominio.
 """
 from pydispatch import dispatcher
 
 from gestion_trabajos.config.topicos import region, topico_evt_trabajo
 from gestion_trabajos.seedwork.aplicacion.handlers import Handler
+from gestion_trabajos.seedwork.infraestructura import correlacion
 from gestion_trabajos.seedwork.infraestructura.despachadores import Despachador
 
 from ..infraestructura.mapeadores import MapeadorEventosTrabajo
@@ -32,7 +33,6 @@ def _propiedades(evento) -> dict:
     return {
         'partner_id': getattr(evento, 'partner_id', None),
         'region': region(getattr(evento, 'pais', None)),
-        'correlation_id': str(getattr(evento, 'trabajo_id', '')),
     }
 
 
@@ -40,6 +40,8 @@ def _publicar(evento):
     """Los dos tipos de evento van al MISMO stream regional, con `trabajo_id`
     como clave: así el cambio de estado nunca se adelanta a la creación dentro
     de un mismo trabajo (brecha G-2)."""
+    # `POST /trabajos` genera el id dentro del comando: aquí es donde se conoce.
+    correlacion.agregar_campos(trabajo_id=str(evento.trabajo_id))
     Despachador().publicar_evento(
         evento,
         topico_evt_trabajo(getattr(evento, 'pais', None)),

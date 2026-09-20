@@ -1,0 +1,1971 @@
+{
+  "info": {
+    "name": "Hogar de los Alpes — BFF",
+    "description": "Colección del BFF (Entrega 5, US-02): un solo punto de entrada para todas las funcionalidades.\n\nCorre de arriba abajo: la carpeta 1 guarda `trabajoId` y la 2 guarda `acreditacionId` y `proveedorId`; las siguientes los reutilizan.\n\nRequiere el sistema en marcha (`docker compose up -d --build`).\n\nVariables de entorno: `bffUrl` (BFF), `sagasDisponibles` (`false` hasta que exista `saga-log`, US-01). Las carpetas 5 y 7 dependen de US-01: con `sagasDisponibles=false` la 5 afirma el comportamiento real actual (503) y la 7 se excluye de `newman`.\n\n    newman run postman/hogar-alpes-bff.postman_collection.json -e postman/bff-local.postman_environment.json \\\n      --folder \"0 · Salud\" --folder \"1 · Trabajos\" --folder \"2 · Acreditaciones\" --folder \"3 · Emparejamiento\" \\\n      --folder \"4 · Seguimiento\" --folder \"5 · Sagas\" --folder \"6 · Endpoints compuestos\" \\\n      --folder \"8 · Errores y degradación\" --folder \"9 · Trazabilidad\"",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0 · Salud",
+      "description": "Que el BFF responde y que ve a los seis componentes.",
+      "item": [
+        {
+          "name": "GET /health — el propio BFF",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/health",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('es el BFF, no un servicio de atrás', () => {",
+                  "    pm.expect(pm.response.json()).to.eql({ status: 'up', service: 'bff' });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /estado-del-sistema — los seis componentes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/estado-del-sistema",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "estado-del-sistema"
+              ]
+            },
+            "description": "No exige `estado_general == OK` mientras `sagasDisponibles` sea false: `saga-log` (US-01) todavía no existe y sale DOWN."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('reporta exactamente los seis componentes', () => {",
+                  "    pm.expect(Object.keys(pm.response.json().componentes).sort()).to.eql(",
+                  "        ['acreditacion', 'bff', 'emparejamiento', 'gestion-trabajos', 'operaciones', 'saga-log']);",
+                  "});",
+                  "pm.test('el propio BFF está UP', () => {",
+                  "    pm.expect(pm.response.json().componentes.bff).to.eql({ estado: 'UP' });",
+                  "});",
+                  "pm.test('estado_general es OK o DEGRADADO', () => {",
+                  "    pm.expect(['OK', 'DEGRADADO']).to.include(pm.response.json().estado_general);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1 · Trabajos",
+      "description": "Crear, consultar y cambiar de estado, a través del BFF. Guarda `trabajoId` y `correlationId`.",
+      "item": [
+        {
+          "name": "POST /trabajos — CO/PLOMERIA (202)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "const cuerpo = pm.response.json();",
+                  "pm.test('el cuerpo trae el id y el estado del servicio', () => {",
+                  "    pm.expect(cuerpo.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);",
+                  "    pm.expect(cuerpo.estado).to.eql('CREADO');",
+                  "});",
+                  "pm.test('el cuerpo trae el correlation_id, igual al de la cabecera', () => {",
+                  "    pm.expect(cuerpo.correlation_id).to.eql(pm.response.headers.get('X-Correlation-Id'));",
+                  "});",
+                  "pm.collectionVariables.set('trabajoId', cuerpo.id);",
+                  "pm.collectionVariables.set('correlationId', cuerpo.correlation_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /trabajos/{id} (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/{{trabajoId}}",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "{{trabajoId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('es el trabajo creado', () => {",
+                  "    pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('trabajoId'));",
+                  "    pm.expect(pm.response.json().categoria).to.eql('PLOMERIA');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /trabajos?estado=CREADO (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos?estado=CREADO",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos"
+              ],
+              "query": [
+                {
+                  "key": "estado",
+                  "value": "CREADO"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('es un arreglo y todos están CREADO', () => {",
+                  "    const lista = pm.response.json();",
+                  "    pm.expect(lista).to.be.an(\"array\");",
+                  "    lista.forEach(t => pm.expect(t.estado).to.eql('CREADO'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT /trabajos/{id}/estado — CREADO → EMPAREJANDO (202)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/{{trabajoId}}/estado",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "{{trabajoId}}",
+                "estado"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"estado\": \"EMPAREJANDO\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.test('el trabajo pasó a EMPAREJANDO', () => {",
+                  "    pm.expect(pm.response.json().estado).to.eql('EMPAREJANDO');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 · Acreditaciones",
+      "description": "Solicitar, aprobar, revocar, consultar y ver el historial. Guarda `acreditacionId` y `proveedorId`.",
+      "item": [
+        {
+          "name": "POST /acreditaciones — solicitar (202)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/acreditaciones",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "acreditaciones"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"proveedor_id\": \"{{proveedorId}}\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"categorias\": [\"PLOMERIA\"],\n  \"nivel\": \"ORO\",\n  \"vigencia_meses\": 12,\n  \"motivo\": \"coleccion BFF\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('proveedorId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.test('quedó SOLICITADA', () => pm.expect(pm.response.json().estado).to.eql('SOLICITADA'));",
+                  "pm.collectionVariables.set('acreditacionId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT /acreditaciones/{id}/aprobar (202)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/acreditaciones/{{acreditacionId}}/aprobar",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "acreditaciones",
+                "{{acreditacionId}}",
+                "aprobar"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"coleccion BFF\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.test('quedó ACREDITADA', () => pm.expect(pm.response.json().estado).to.eql('ACREDITADA'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /acreditaciones/{id} (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/acreditaciones/{{acreditacionId}}",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "acreditaciones",
+                "{{acreditacionId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('es la acreditación del proveedor y está ACREDITADA', () => {",
+                  "    const a = pm.response.json();",
+                  "    pm.expect(a.proveedor_id).to.eql(pm.collectionVariables.get('proveedorId'));",
+                  "    pm.expect(a.estado).to.eql('ACREDITADA');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /acreditaciones/{id}/eventos — historial (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/acreditaciones/{{acreditacionId}}/eventos",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "acreditaciones",
+                "{{acreditacionId}}",
+                "eventos"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('el historial tiene solicitud y aprobación, en orden', () => {",
+                  "    const tipos = pm.response.json().map(e => e.tipo);",
+                  "    pm.expect(tipos).to.eql(['AcreditacionSolicitada', 'AcreditacionAprobada']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /acreditaciones — otra, para revocar (202)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/acreditaciones",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "acreditaciones"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"proveedor_id\": \"{{proveedorRevocarId}}\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"categorias\": [\"PLOMERIA\"],\n  \"nivel\": \"ORO\",\n  \"vigencia_meses\": 12,\n  \"motivo\": \"coleccion BFF\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Otra acreditación, para no revocar la de la carpeta 3 (Emparejamiento)."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('proveedorRevocarId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.collectionVariables.set('acreditacionRevocarId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT /acreditaciones/{id}/aprobar — la que se va a revocar (202)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/acreditaciones/{{acreditacionRevocarId}}/aprobar",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "acreditaciones",
+                "{{acreditacionRevocarId}}",
+                "aprobar"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"coleccion BFF\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT /acreditaciones/{id}/revocar (202)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/acreditaciones/{{acreditacionRevocarId}}/revocar",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "acreditaciones",
+                "{{acreditacionRevocarId}}",
+                "revocar"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"coleccion BFF\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.test('quedó REVOCADA', () => pm.expect(pm.response.json().estado).to.eql('REVOCADA'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /acreditaciones/{id}/eventos — el historial creció (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/acreditaciones/{{acreditacionRevocarId}}/eventos",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "acreditaciones",
+                "{{acreditacionRevocarId}}",
+                "eventos"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('el historial suma la revocación', () => {",
+                  "    const tipos = pm.response.json().map(e => e.tipo);",
+                  "    pm.expect(tipos).to.eql(['AcreditacionSolicitada', 'AcreditacionAprobada', 'AcreditacionRevocada']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 · Emparejamiento",
+      "description": "Buscar candidatos y consultar un emparejamiento. La proyección y el emparejamiento son eventuales: se reintenta con tope.",
+      "item": [
+        {
+          "name": "GET /candidatos — aparece el proveedor aprobado (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/candidatos?categoria=PLOMERIA&pais=CO&ciudad=Bogota",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "candidatos"
+              ],
+              "query": [
+                {
+                  "key": "categoria",
+                  "value": "PLOMERIA"
+                },
+                {
+                  "key": "pais",
+                  "value": "CO"
+                },
+                {
+                  "key": "ciudad",
+                  "value": "Bogota"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const MAX_INTENTOS = 10;",
+                  "const ESPERA_MS = 500;",
+                  "let intento = pm.collectionVariables.get('reintentoCandidatos') || 0;",
+                  "const listo = pm.response.code === 200 && pm.response.json().some(c => c.proveedor_id === pm.collectionVariables.get('proveedorId'));",
+                  "if (listo || intento >= MAX_INTENTOS) {",
+                  "    pm.collectionVariables.set('reintentoCandidatos', 0);",
+                  "    pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "    pm.test('la lista incluye al proveedor aprobado', () => {",
+                  "        const ids = pm.response.json().map(c => c.proveedor_id);",
+                  "        pm.expect(ids).to.include(pm.collectionVariables.get('proveedorId'));",
+                  "    });",
+                  "} else {",
+                  "    intento += 1;",
+                  "    pm.collectionVariables.set('reintentoCandidatos', intento);",
+                  "    const inicio = Date.now();",
+                  "    while (Date.now() - inicio < ESPERA_MS) { /* espera activa: sin setTimeout en el sandbox */ }",
+                  "    postman.setNextRequest(pm.info.requestName);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /emparejamientos/{id} (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/emparejamientos/{{trabajoId}}",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "emparejamientos",
+                "{{trabajoId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const MAX_INTENTOS = 10;",
+                  "const ESPERA_MS = 500;",
+                  "let intento = pm.collectionVariables.get('reintentoEmparejamiento') || 0;",
+                  "const listo = pm.response.code === 200;",
+                  "if (listo || intento >= MAX_INTENTOS) {",
+                  "    pm.collectionVariables.set('reintentoEmparejamiento', 0);",
+                  "    pm.test('200 OK — el evento del trabajo llegó a Emparejamiento', () => pm.expect(pm.response.code).to.eql(200));",
+                  "    pm.test('es el emparejamiento del trabajo', () => {",
+                  "        pm.expect(pm.response.json().trabajo_id).to.eql(pm.collectionVariables.get('trabajoId'));",
+                  "    });",
+                  "} else {",
+                  "    intento += 1;",
+                  "    pm.collectionVariables.set('reintentoEmparejamiento', intento);",
+                  "    const inicio = Date.now();",
+                  "    while (Date.now() - inicio < ESPERA_MS) { /* espera activa: sin setTimeout en el sandbox */ }",
+                  "    postman.setNextRequest(pm.info.requestName);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4 · Seguimiento",
+      "description": "Seguimiento y conteos de Operaciones. El seguimiento lo abre otro servicio por Pulsar: se reintenta.",
+      "item": [
+        {
+          "name": "GET /seguimientos/{id} (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/seguimientos/{{trabajoId}}",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "seguimientos",
+                "{{trabajoId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const MAX_INTENTOS = 10;",
+                  "const ESPERA_MS = 500;",
+                  "let intento = pm.collectionVariables.get('reintentoSeguimiento') || 0;",
+                  "const listo = pm.response.code === 200;",
+                  "if (listo || intento >= MAX_INTENTOS) {",
+                  "    pm.collectionVariables.set('reintentoSeguimiento', 0);",
+                  "    pm.test('200 OK — el evento cruzó a Operaciones', () => pm.expect(pm.response.code).to.eql(200));",
+                  "    pm.test('el seguimiento apunta al trabajo', () => {",
+                  "        pm.expect(pm.response.json().trabajo_id).to.eql(pm.collectionVariables.get('trabajoId'));",
+                  "    });",
+                  "} else {",
+                  "    intento += 1;",
+                  "    pm.collectionVariables.set('reintentoSeguimiento', intento);",
+                  "    const inicio = Date.now();",
+                  "    while (Date.now() - inicio < ESPERA_MS) { /* espera activa: sin setTimeout en el sandbox */ }",
+                  "    postman.setNextRequest(pm.info.requestName);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /seguimientos/conteo (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/seguimientos/conteo",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "seguimientos",
+                "conteo"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('trae un total numérico', () => pm.expect(pm.response.json().total).to.be.a('number'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /eventos-procesados/conteo (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/eventos-procesados/conteo",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "eventos-procesados",
+                "conteo"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('trae un total numérico', () => pm.expect(pm.response.json().total).to.be.a('number'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5 · Sagas",
+      "description": "PENDIENTE hasta US-01. Con `sagasDisponibles=false` afirma el comportamiento REAL actual (503 que nombra a `saga-log`, sin marcarse verde a ciegas); con `true`, el final (200 y su forma).",
+      "item": [
+        {
+          "name": "GET /sagas/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/sagas/{{trabajoId}}",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "{{trabajoId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const disponibles = pm.variables.get('sagasDisponibles') === 'true';",
+                  "if (disponibles) {",
+                  "    pm.test('200 OK — saga-log responde', () => pm.expect(pm.response.code).to.eql(200));",
+                  "    pm.test('la saga es la del trabajo', () => pm.expect(pm.response.json().trabajo_id).to.eql(pm.collectionVariables.get('trabajoId')));",
+                  "} else {",
+                  "    pm.test('503 — saga-log todavía no existe (PENDIENTE hasta US-01)', () => pm.expect(pm.response.code).to.eql(503));",
+                  "    pm.test('el 503 nombra a saga-log', () => pm.expect(pm.response.json().servicio).to.eql('saga-log'));",
+                  "}",
+                  "pm.test('trae la cabecera X-Correlation-Id', () => pm.expect(pm.response.headers.get('X-Correlation-Id')).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /sagas?estado=COMPLETADA",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/sagas?estado=COMPLETADA",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ],
+              "query": [
+                {
+                  "key": "estado",
+                  "value": "COMPLETADA"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const disponibles = pm.variables.get('sagasDisponibles') === 'true';",
+                  "if (disponibles) {",
+                  "    pm.test('200 OK — saga-log responde', () => pm.expect(pm.response.code).to.eql(200));",
+                  "    pm.test('es un arreglo', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "} else {",
+                  "    pm.test('503 — saga-log todavía no existe (PENDIENTE hasta US-01)', () => pm.expect(pm.response.code).to.eql(503));",
+                  "    pm.test('el 503 nombra a saga-log', () => pm.expect(pm.response.json().servicio).to.eql('saga-log'));",
+                  "}",
+                  "pm.test('trae la cabecera X-Correlation-Id', () => pm.expect(pm.response.headers.get('X-Correlation-Id')).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /sagas/resumen",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/sagas/resumen",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "resumen"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const disponibles = pm.variables.get('sagasDisponibles') === 'true';",
+                  "if (disponibles) {",
+                  "    pm.test('200 OK — saga-log responde', () => pm.expect(pm.response.code).to.eql(200));",
+                  "    pm.test('es un objeto con conteos', () => pm.expect(pm.response.json()).to.be.an('object'));",
+                  "} else {",
+                  "    pm.test('503 — saga-log todavía no existe (PENDIENTE hasta US-01)', () => pm.expect(pm.response.code).to.eql(503));",
+                  "    pm.test('el 503 nombra a saga-log', () => pm.expect(pm.response.json().servicio).to.eql('saga-log'));",
+                  "}",
+                  "pm.test('trae la cabecera X-Correlation-Id', () => pm.expect(pm.response.headers.get('X-Correlation-Id')).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6 · Endpoints compuestos",
+      "description": "Las cuatro rutas que solo existen en el BFF.",
+      "item": [
+        {
+          "name": "GET /trabajos/{id}/completo (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/{{trabajoId}}/completo",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "{{trabajoId}}",
+                "completo"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const parte = (n) => pm.response.json().partes[n].estado;",
+                  "pm.test('la parte trabajo está DISPONIBLE y es el trabajo', () => {",
+                  "    pm.expect(parte('trabajo')).to.eql('DISPONIBLE');",
+                  "    pm.expect(pm.response.json().partes.trabajo.datos.id).to.eql(pm.collectionVariables.get('trabajoId'));",
+                  "});",
+                  "pm.test('seguimiento y emparejamiento: DISPONIBLE o todavía no (consistencia eventual)', () => {",
+                  "    pm.expect(['DISPONIBLE', 'TODAVIA_NO_DISPONIBLE']).to.include(parte('seguimiento'));",
+                  "    pm.expect(['DISPONIBLE', 'TODAVIA_NO_DISPONIBLE']).to.include(parte('emparejamiento'));",
+                  "});",
+                  "pm.test('la parte saga refleja si saga-log existe', () => {",
+                  "    if (pm.variables.get('sagasDisponibles') === 'true') {",
+                  "        pm.expect(['DISPONIBLE', 'TODAVIA_NO_DISPONIBLE']).to.include(parte('saga'));",
+                  "    } else {",
+                  "        pm.expect(parte('saga')).to.eql('NO_DISPONIBLE');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /proveedores/{id}/completo (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/proveedores/{{acreditacionId}}/completo",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "proveedores",
+                "{{acreditacionId}}",
+                "completo"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('la acreditación es la del proveedor', () => {",
+                  "    const c = pm.response.json();",
+                  "    pm.expect(c.proveedor_id).to.eql(pm.collectionVariables.get('proveedorId'));",
+                  "    pm.expect(c.partes.acreditacion.datos.proveedor_id).to.eql(pm.collectionVariables.get('proveedorId'));",
+                  "});",
+                  "pm.test('trae historial y candidato', () => {",
+                  "    pm.expect(pm.response.json().partes.historial.estado).to.eql('DISPONIBLE');",
+                  "    pm.expect(pm.response.json().partes.candidato.estado).to.eql('DISPONIBLE');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /estado-del-sistema (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/estado-del-sistema",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "estado-del-sistema"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('trae correlation_id y los componentes', () => {",
+                  "    pm.expect(pm.response.json().correlation_id).to.eql(pm.response.headers.get('X-Correlation-Id'));",
+                  "    pm.expect(pm.response.json().componentes['gestion-trabajos'].estado).to.eql('UP');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /trabajos/asignacion (202)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/asignacion",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "asignacion"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "const c = pm.response.json();",
+                  "pm.test('trae el identificador y dónde seguir la saga', () => {",
+                  "    pm.expect(c.correlation_id).to.eql(pm.response.headers.get('X-Correlation-Id'));",
+                  "    pm.expect(c.seguimiento_saga).to.eql('/sagas/' + c.id);",
+                  "    pm.expect(c.seguimiento_completo).to.eql('/trabajos/' + c.id + '/completo');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7 · Saga de punta a punta",
+      "description": "PENDIENTE hasta US-01 — EXCLUIDA de las ejecuciones de `newman` hasta que exista `saga-log` (CA-2.25 y CA-2.26 no pueden cerrarse antes). Los cuatro casos de US-01: exitoso y tres fallos (`SIN_CANDIDATOS`, `VIGENCIA`, `ASIGNACION`), cada uno con el estado final de su saga.",
+      "item": [
+        {
+          "name": "Exitoso — sin marca (COMPLETADA)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Simular-Fallo",
+                "value": "{{marcaFallo}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/asignacion",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "asignacion"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "El nombre exacto de la marca de simulación (aquí la cabecera `X-Simular-Fallo`) se fija en US-01; ajustarlo entonces. Verifica luego `GET /sagas/{id}` hasta `COMPLETADA`."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('marcaFallo', \"\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.collectionVariables.set('trabajoSagaId', pm.response.json().id);",
+                  "pm.test('PENDIENTE hasta US-01: el estado final esperado es COMPLETADA', () => {",
+                  "    pm.expect('COMPLETADA').to.be.oneOf(['COMPLETADA', 'COMPENSADA']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Fallo SIN_CANDIDATOS (COMPENSADA)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Simular-Fallo",
+                "value": "{{marcaFallo}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/asignacion",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "asignacion"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "El nombre exacto de la marca de simulación (aquí la cabecera `X-Simular-Fallo`) se fija en US-01; ajustarlo entonces. Verifica luego `GET /sagas/{id}` hasta `COMPENSADA`."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('marcaFallo', \"SIN_CANDIDATOS\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.collectionVariables.set('trabajoSagaId', pm.response.json().id);",
+                  "pm.test('PENDIENTE hasta US-01: el estado final esperado es COMPENSADA', () => {",
+                  "    pm.expect('COMPENSADA').to.be.oneOf(['COMPLETADA', 'COMPENSADA']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Fallo VIGENCIA (COMPENSADA)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Simular-Fallo",
+                "value": "{{marcaFallo}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/asignacion",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "asignacion"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "El nombre exacto de la marca de simulación (aquí la cabecera `X-Simular-Fallo`) se fija en US-01; ajustarlo entonces. Verifica luego `GET /sagas/{id}` hasta `COMPENSADA`."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('marcaFallo', \"VIGENCIA\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.collectionVariables.set('trabajoSagaId', pm.response.json().id);",
+                  "pm.test('PENDIENTE hasta US-01: el estado final esperado es COMPENSADA', () => {",
+                  "    pm.expect('COMPENSADA').to.be.oneOf(['COMPLETADA', 'COMPENSADA']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Fallo ASIGNACION (COMPENSADA)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Simular-Fallo",
+                "value": "{{marcaFallo}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/asignacion",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "asignacion"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "El nombre exacto de la marca de simulación (aquí la cabecera `X-Simular-Fallo`) se fija en US-01; ajustarlo entonces. Verifica luego `GET /sagas/{id}` hasta `COMPENSADA`."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('marcaFallo', \"ASIGNACION\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.collectionVariables.set('trabajoSagaId', pm.response.json().id);",
+                  "pm.test('PENDIENTE hasta US-01: el estado final esperado es COMPENSADA', () => {",
+                  "    pm.expect('COMPENSADA').to.be.oneOf(['COMPLETADA', 'COMPENSADA']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8 · Errores y degradación",
+      "description": "Sin detener contenedores (newman no controla Docker): el servicio caído lo verifica `escenarios/bff.sh`.",
+      "item": [
+        {
+          "name": "GET /no-existe — 404 propio con los grupos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/no-existe",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "no-existe"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.expect(pm.response.code).to.eql(404));",
+                  "pm.test('lista los grupos de rutas disponibles', () => {",
+                  "    const c = pm.response.json();",
+                  "    pm.expect(c.error).to.eql('Ruta no encontrada');",
+                  "    const grupos = c.grupos_disponibles.map(g => g.grupo);",
+                  "    pm.expect(grupos).to.include.members(['Trabajos', 'Seguimiento', 'Acreditaciones', 'Emparejamiento', 'Sagas', 'Compuestos']);",
+                  "});",
+                  "pm.test('la respuesta no trae traza de error', () => {",
+                  "    pm.expect(pm.response.text()).to.not.include('Traceback');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /trabajos — 405 con los métodos permitidos",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('405 Method Not Allowed', () => pm.expect(pm.response.code).to.eql(405));",
+                  "pm.test('lista los métodos permitidos', () => {",
+                  "    pm.expect(pm.response.json().metodos_permitidos).to.include.members(['GET', 'POST']);",
+                  "});",
+                  "pm.test('la respuesta no trae traza de error', () => {",
+                  "    pm.expect(pm.response.text()).to.not.include('Traceback');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /trabajos/{inexistente} — 404 del servicio",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.expect(pm.response.code).to.eql(404));",
+                  "pm.test('es el 404 del servicio, no el del BFF', () => {",
+                  "    pm.expect(pm.response.json()).to.not.have.property('grupos_disponibles');",
+                  "    pm.expect(pm.response.json()).to.have.property('error');",
+                  "});",
+                  "pm.test('la respuesta no trae traza de error', () => {",
+                  "    pm.expect(pm.response.text()).to.not.include('Traceback');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /trabajos — categoría no permitida en México (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"SINIESTRO_GRANIZO\",\n  \"pais\": \"MX\",\n  \"ciudad\": \"CDMX\",\n  \"direccion\": \"Reforma 1\",\n  \"urgencia\": \"NORMAL\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.expect(pm.response.code).to.eql(400));",
+                  "pm.test('el mismo mensaje del servicio, sin reinterpretar', () => {",
+                  "    pm.expect(pm.response.json().error).to.eql('La categoría SINIESTRO_GRANIZO no aplica en esta región');",
+                  "    pm.expect(pm.response.json()).to.not.have.property('correlation_id');",
+                  "});",
+                  "pm.test('la respuesta no trae traza de error', () => {",
+                  "    pm.expect(pm.response.text()).to.not.include('Traceback');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /seguimientos/{inexistente} — 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/seguimientos/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "seguimientos",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.expect(pm.response.code).to.eql(404));",
+                  "pm.test('la respuesta no trae traza de error', () => {",
+                  "    pm.expect(pm.response.text()).to.not.include('Traceback');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /trabajos/{inexistente}/completo — 404 sin partes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/00000000-0000-0000-0000-000000000000/completo",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "00000000-0000-0000-0000-000000000000",
+                "completo"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found, tal cual lo da Gestión de Trabajos', () => pm.expect(pm.response.code).to.eql(404));",
+                  "pm.test('no trae partes', () => pm.expect(pm.response.json()).to.not.have.property('partes'));",
+                  "pm.test('la respuesta no trae traza de error', () => {",
+                  "    pm.expect(pm.response.text()).to.not.include('Traceback');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /proveedores/{inexistente}/completo — 404 sin partes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/proveedores/00000000-0000-0000-0000-000000000000/completo",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "proveedores",
+                "00000000-0000-0000-0000-000000000000",
+                "completo"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found, tal cual lo da Acreditación', () => pm.expect(pm.response.code).to.eql(404));",
+                  "pm.test('no trae partes', () => pm.expect(pm.response.json()).to.not.have.property('partes'));",
+                  "pm.test('la respuesta no trae traza de error', () => {",
+                  "    pm.expect(pm.response.text()).to.not.include('Traceback');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "9 · Trazabilidad",
+      "description": "CA-2.16, CA-2.17, CA-2.17b: el BFF crea el identificador si no viene, respeta el del cliente y lo devuelve en TODA respuesta. El 503 con cabecera lo cubre `escenarios/bff.sh` (necesita detener un servicio).",
+      "item": [
+        {
+          "name": "Sin cabecera — el BFF crea un uuid",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/health",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('trae un uuid nuevo', () => pm.expect(pm.response.headers.get('X-Correlation-Id')).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Con cabecera propia — el BFF la respeta",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-Id",
+                "value": "{{idCliente}}"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/health",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idCliente', 'mi-id-postman-' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('devuelve el mismo valor', () => {",
+                  "    pm.expect(pm.response.headers.get('X-Correlation-Id')).to.eql(pm.collectionVariables.get('idCliente'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Con cabecera inválida — el BFF la reemplaza",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-Id",
+                "value": "con espacios y | raros"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/health",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('devuelve un uuid distinto del enviado', () => {",
+                  "    const devuelto = pm.response.headers.get('X-Correlation-Id');",
+                  "    pm.expect(devuelto).to.not.eql('con espacios y | raros');",
+                  "    pm.expect(devuelto).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cabecera en un 202 — POST /trabajos",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 con cabecera', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.test('trae la cabecera X-Correlation-Id', () => {",
+                  "    pm.expect(pm.response.headers.get('X-Correlation-Id')).to.match(/^[A-Za-z0-9._:-]{1,64}$/);",
+                  "});",
+                  "pm.test('el correlation_id del cuerpo es el de la cabecera (CA-2.17b)', () => {",
+                  "    pm.expect(pm.response.json().correlation_id).to.eql(pm.response.headers.get('X-Correlation-Id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cabecera en un 400 de negocio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"SINIESTRO_GRANIZO\",\n  \"pais\": \"MX\",\n  \"ciudad\": \"CDMX\",\n  \"direccion\": \"Reforma 1\",\n  \"urgencia\": \"NORMAL\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 con cabecera', () => pm.expect(pm.response.code).to.eql(400));",
+                  "pm.test('trae la cabecera X-Correlation-Id', () => {",
+                  "    pm.expect(pm.response.headers.get('X-Correlation-Id')).to.match(/^[A-Za-z0-9._:-]{1,64}$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cabecera en un 404 del servicio",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 con cabecera', () => pm.expect(pm.response.code).to.eql(404));",
+                  "pm.test('trae la cabecera X-Correlation-Id', () => {",
+                  "    pm.expect(pm.response.headers.get('X-Correlation-Id')).to.match(/^[A-Za-z0-9._:-]{1,64}$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cabecera en un 404 propio",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/no-existe",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "no-existe"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 con cabecera', () => pm.expect(pm.response.code).to.eql(404));",
+                  "pm.test('trae la cabecera X-Correlation-Id', () => {",
+                  "    pm.expect(pm.response.headers.get('X-Correlation-Id')).to.match(/^[A-Za-z0-9._:-]{1,64}$/);",
+                  "});",
+                  "pm.test('el cuerpo del error también lleva el correlation_id', () => {",
+                  "    pm.expect(pm.response.json().correlation_id).to.eql(pm.response.headers.get('X-Correlation-Id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cabecera en un 405",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('405 con cabecera', () => pm.expect(pm.response.code).to.eql(405));",
+                  "pm.test('trae la cabecera X-Correlation-Id', () => {",
+                  "    pm.expect(pm.response.headers.get('X-Correlation-Id')).to.match(/^[A-Za-z0-9._:-]{1,64}$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /trabajos/asignacion — identificador en el cuerpo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos/asignacion",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos",
+                "asignacion"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 con cabecera', () => pm.expect(pm.response.code).to.eql(202));",
+                  "pm.test('trae la cabecera X-Correlation-Id', () => {",
+                  "    pm.expect(pm.response.headers.get('X-Correlation-Id')).to.match(/^[A-Za-z0-9._:-]{1,64}$/);",
+                  "});",
+                  "pm.test('el correlation_id del cuerpo es el de la cabecera', () => {",
+                  "    pm.expect(pm.response.json().correlation_id).to.eql(pm.response.headers.get('X-Correlation-Id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "bffUrl",
+      "value": "http://localhost:8090"
+    },
+    {
+      "key": "sagasDisponibles",
+      "value": "false"
+    },
+    {
+      "key": "trabajoId",
+      "value": ""
+    },
+    {
+      "key": "acreditacionId",
+      "value": ""
+    },
+    {
+      "key": "proveedorId",
+      "value": ""
+    },
+    {
+      "key": "correlationId",
+      "value": ""
+    }
+  ]
+}

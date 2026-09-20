@@ -16,11 +16,16 @@
 # (broker-2) que no puede resolver.
 #
 # Topología de datos DESCENTRALIZADA (INF-5 · CA-T1): cada servicio comparte red
-# únicamente con el broker y con SU base de datos. Desde `gestion-trabajos`, el
-# host `postgres-acreditacion` ni siquiera resuelve. No es disciplina: es la red.
+# con el broker y con SU base de datos. Desde `gestion-trabajos`, el host
+# `postgres-acreditacion` ni siquiera resuelve. No es disciplina: es la red.
+# Única adición: la API de cada servicio comparte además una red `red-bff-<svc>`
+# con el BFF y con nadie más (excepción al Principio I, en docs/decisiones.md).
+#
+# BFF (US-02): componente de borde, sin base de datos ni broker. Es el único que
+# llama por HTTP hacia adentro; los servicios de dominio siguen sin llamarse.
 #
 # Puertos de las API en el host: 8000 trabajos · 8001 operaciones ·
-# 8002 acreditación · 8003 emparejamiento.
+# 8002 acreditación · 8003 emparejamiento · 8090 BFF (el 8080 es del broker).
 
 services:
   # --------------------------------------------------------------- Pulsar
@@ -244,7 +249,7 @@ services:
   # Una imagen, dos procesos: la API y el consumidor escalan por separado.
   gestion-trabajos:
     build: ./servicios/gestion_trabajos
-    networks: [red-broker, red-trabajos]
+    networks: [red-broker, red-trabajos, red-bff-trabajos]
     environment: &gt-env
       DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-hogaralpes}:${POSTGRES_PASSWORD:-hogaralpes}@postgres-trabajos:5432/gestion_trabajos
       BROKER_HOST: broker-1
@@ -301,7 +306,7 @@ services:
 
   operaciones:
     build: ./servicios/operaciones
-    networks: [red-broker, red-operaciones]
+    networks: [red-broker, red-operaciones, red-bff-operaciones]
     environment: &ops-env
       DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-hogaralpes}:${POSTGRES_PASSWORD:-hogaralpes}@postgres-operaciones:5432/operaciones
       BROKER_HOST: broker-1
@@ -341,7 +346,7 @@ services:
 
   acreditacion:
     build: ./servicios/acreditacion
-    networks: [red-broker, red-acreditacion]
+    networks: [red-broker, red-acreditacion, red-bff-acreditacion]
     environment: &acr-env
       DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-hogaralpes}:${POSTGRES_PASSWORD:-hogaralpes}@postgres-acreditacion:5432/acreditacion
       BROKER_HOST: broker-1
@@ -379,7 +384,7 @@ services:
 
   emparejamiento:
     build: ./servicios/emparejamiento
-    networks: [red-broker, red-emparejamiento]
+    networks: [red-broker, red-emparejamiento, red-bff-emparejamiento]
     environment: &emp-env
       DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-hogaralpes}:${POSTGRES_PASSWORD:-hogaralpes}@postgres-emparejamiento:5432/emparejamiento
       BROKER_HOST: broker-1
@@ -448,12 +453,46 @@ services:
       ROL_CONSUMIDOR: regional
       REGION: conosur
 
+  # ------------------------------------------------------------------ BFF
+  # Un solo punto de entrada para los clientes (US-02). Sin base de datos, sin
+  # broker, sin volúmenes y SIN `depends_on`: debe arrancar aunque un servicio
+  # de atrás esté caído (o todavía no exista, como `saga-log`) y degradar.
+  # Solo está en las redes `red-bff-*`: no resuelve el broker ni las bases.
+  bff:
+    build: ./servicios/bff
+    networks:
+      - red-bff-trabajos
+      - red-bff-operaciones
+      - red-bff-acreditacion
+      - red-bff-emparejamiento
+      - red-bff-saga
+    environment:
+      URL_TRABAJOS: http://gestion-trabajos:5000
+      URL_OPERACIONES: http://operaciones:5000
+      URL_ACREDITACION: http://acreditacion:5000
+      URL_EMPAREJAMIENTO: http://emparejamiento:5000
+      URL_SAGAS: http://saga-log:5000
+      TIMEOUT_REENVIO_S: ${TIMEOUT_REENVIO_S:-5}
+      TIMEOUT_COMPUESTO_S: ${TIMEOUT_COMPUESTO_S:-1.5}
+      WORKERS: ${WORKERS:-2}
+      THREADS: ${THREADS:-8}
+    ports:
+      # 8080 lo publica broker-1.
+      - "${PUERTO_BFF:-8090}:5000"
+
 networks:
   red-broker:
   red-trabajos:
   red-operaciones:
   red-acreditacion:
   red-emparejamiento:
+  # Una red por par BFF–servicio: cada una tiene solo al BFF y a una API.
+  # `red-bff-saga` queda solo con el BFF hasta que exista `saga-log` (US-01).
+  red-bff-trabajos:
+  red-bff-operaciones:
+  red-bff-acreditacion:
+  red-bff-emparejamiento:
+  red-bff-saga:
 
 volumes:
   pgdata-trabajos:

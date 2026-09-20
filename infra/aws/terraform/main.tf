@@ -228,6 +228,18 @@ resource "aws_security_group" "hogar_alpes" {
 # Regla separada (no un bloque `ingress` más del recurso de arriba) para que
 # activarla/desactivarla sea un cambio de una sola regla, no un diff del
 # security group completo cada vez que se prende y se apaga para la demo.
+# El BFF (US-02): un solo punto de entrada. Regla aparte y no otra entrada del
+# bloque `ingress` de las cuatro API, para que se pueda quitar sin tocarlo.
+resource "aws_security_group_rule" "bff" {
+  type              = "ingress"
+  security_group_id = aws_security_group.hogar_alpes.id
+  from_port         = 8090
+  to_port           = 8090
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  description       = "BFF - un solo punto de entrada (US-02)"
+}
+
 resource "aws_security_group_rule" "pulsar_manager_demo" {
   count             = var.exponer_pulsar_manager ? 1 : 0
   type              = "ingress"
@@ -288,6 +300,7 @@ output "urls" {
     operaciones      = "http://${aws_instance.hogar_alpes.public_ip}:8001/health"
     acreditacion     = "http://${aws_instance.hogar_alpes.public_ip}:8002/health"
     emparejamiento   = "http://${aws_instance.hogar_alpes.public_ip}:8003/health"
+    bff              = "http://${aws_instance.hogar_alpes.public_ip}:8090/health"
   }
 }
 

@@ -14,9 +14,12 @@ import os
 
 
 def main():
+    from gestion_trabajos.seedwork.infraestructura import correlacion
+
+    correlacion.instalar_registro()
     logging.basicConfig(
         level=os.getenv('LOG_LEVEL', 'INFO'),
-        format='%(levelname)s %(name)s | %(message)s',
+        format='%(levelname)s %(name)s | cid=%(correlation_id)s%(campos)s | %(message)s',
     )
 
     from gestion_trabajos import crear_app

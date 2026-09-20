@@ -20,6 +20,8 @@ import logging
 
 from gestion_trabajos.config.broker import productor
 
+from . import correlacion
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,11 +33,15 @@ class Despachador:
 
     def _publicar_mensaje(self, mensaje, topico: str, schema, clave: str | None = None,
                           propiedades: dict | None = None):
+        # La correlación sale del contexto de borde y pisa lo que haya puesto el handler.
+        # No es la clave de partición: esa sigue viajando aparte, en `partition_key`.
+        properties = {k: str(v) for k, v in (propiedades or {}).items() if v is not None}
+        properties['correlation_id'] = correlacion.actual()
         try:
             productor(topico, schema).send(
                 mensaje,
                 partition_key=str(clave) if clave else None,
-                properties={k: str(v) for k, v in (propiedades or {}).items() if v is not None},
+                properties=properties,
             )
             logger.info('Evento publicado en %s (clave=%s)', topico, clave)
         except Exception as e:

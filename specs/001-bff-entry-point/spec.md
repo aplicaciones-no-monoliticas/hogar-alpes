@@ -49,7 +49,7 @@ Una persona que quiere saber «¿cómo va este trabajo?» obtiene la respuesta c
 
 ### User Story 3 - Reconstruir una petición con una sola búsqueda (Priority: P2)
 
-Una persona que diagnostica un problema toma el **código único de la petición** (identificador de correlación) y, con una sola búsqueda en los registros de los seis servicios, reconstruye en orden todo lo que pasó, en lugar de adivinar qué línea de cada servicio corresponde a qué petición. El código lo crea el BFF —una sola vez por petición, o lo respeta si el cliente lo manda— y lo devuelve siempre al cliente; todos los servicios lo copian en cada mensaje que publican y en cada línea de registro relacionada.
+Una persona que diagnostica un problema toma el **código único de la petición** (identificador de correlación) y, con una sola búsqueda en los registros de los seis servicios, reconstruye en orden todo lo que pasó, en lugar de adivinar qué línea de cada servicio corresponde a qué petición. El código lo crea el BFF —una sola vez por petición, o lo respeta si el cliente lo manda— y lo devuelve siempre al cliente; todos los servicios lo copian en cada mensaje que publican y en cada línea de registro relacionada. Para seguir la vida completa de un trabajo a través de varias peticiones, los registros llevan además el `trabajo_id`.
 
 **Why this priority**: es la mejora de diagnóstico más importante de la entrega, pero atraviesa los cinco servicios existentes y por eso se verifica sobre una saga real, después de tener la puerta de entrada (US1). Cubre incluso flujos sin trabajo, como acreditar un proveedor.
 
@@ -64,6 +64,7 @@ Una persona que diagnostica un problema toma el **código único de la petición
 5. **Given** una saga real disparada a través del BFF, **When** se busca el identificador devuelto en los registros de los seis servicios, **Then** una sola búsqueda muestra la cadena completa, en orden, y el mismo valor aparece en los mensajes publicados (en el sobre y en las propiedades).
 6. **Given** una petición directa a la API de un servicio, o un mensaje publicado por una herramienta externa sin identificador válido (vacío o con caracteres no permitidos), **When** el servicio lo recibe, **Then** crea el identificador y lo propaga desde ahí, de modo que ninguna cadena queda sin identificar.
 7. **Given** los mensajes de un mismo trabajo en el tópico de eventos de trabajo, **When** se publican con el nuevo identificador de correlación, **Then** siguen cayendo todos en la misma partición y el orden dentro de un trabajo no cambia.
+8. **Given** un trabajo con dos peticiones (su creación y un cambio de estado), **When** se busca su `trabajo_id` en los registros, **Then** aparecen las líneas de ambas peticiones con dos identificadores de correlación distintos, y buscar cada identificador de correlación por separado trae solo las líneas de su petición.
 
 ---
 
@@ -164,6 +165,7 @@ Quien mantiene la arquitectura necesita la garantía de que agregar el BFF **no*
 - **FR-026**: Las peticiones que inician una saga (`POST /trabajos` y `POST /trabajos/asignacion`) DEBEN devolver además el identificador en el cuerpo de la respuesta, junto al identificador del trabajo.
 - **FR-027**: Cada servicio DEBE colocar el identificador recibido en **cada mensaje que publica**, tanto en el sobre del mensaje como en sus propiedades, y DEBE leerlo del mensaje que consume para volver a propagarlo, sin importar cuántos saltos dé la cadena.
 - **FR-028**: Cada servicio DEBE escribir el identificador en **todas** las líneas de registro relacionadas con esa petición, de modo que una sola búsqueda reconstruya la cadena completa en orden, incluso en flujos sin trabajo (por ejemplo, acreditar un proveedor).
+- **FR-028b**: Además del identificador de correlación, cada línea de registro que un servicio (o el BFF) escribe mientras atiende algo de un trabajo —una petición cuya ruta lleva el identificador del trabajo o un mensaje que trae `trabajo_id`— DEBE llevar también `trabajo_id=<id>`, de modo que una sola búsqueda por `trabajo_id` reconstruya la vida completa de un trabajo a través de varias peticiones, cada una con su propio identificador de correlación. El valor se escribe solo si cumple el mismo formato que el identificador de correlación; las líneas emitidas antes de que el servicio conozca el identificador del trabajo no lo llevan.
 - **FR-029**: Si una petición o un mensaje llega a un servicio sin identificador de correlación (directo a su API o publicado por una herramienta externa sin identificador válido), quien lo recibe DEBE crear uno y propagarlo desde ahí.
 - **FR-030**: El identificador de correlación NO DEBE aparecer en ninguna entidad de dominio ni en ninguna tabla de negocio; DEBE viajar solo por el borde de cada servicio (de la petición o mensaje entrante al mensaje saliente).
 - **FR-031**: La clave de partición del tópico de eventos de trabajo DEBE seguir siendo el identificador del trabajo, sin cambios en el orden dentro de un trabajo, el número de particiones ni el tipo de suscripción. No DEBE cambiar el contrato de los mensajes: cambia el valor escrito en un campo que ya existe, no la forma del mensaje.
@@ -185,7 +187,7 @@ Quien mantiene la arquitectura necesita la garantía de que agregar el BFF **no*
 ### Key Entities *(include if feature involves data)*
 
 - **Petición entrante**: solicitud de un cliente al BFF. Tiene una ruta, un cuerpo opcional y un identificador de correlación (recibido o creado). No se persiste.
-- **Identificador de correlación**: código único que identifica una petición a lo largo de toda su cadena. Se crea una sola vez (en el BFF o, si la petición no pasa por él, en quien la recibe), se devuelve al cliente y se copia tal cual en mensajes y registros. Es información de transporte, no un dato de negocio, y es independiente de la clave de partición.
+- **Identificador de correlación**: código único que identifica una petición a lo largo de toda su cadena. Se crea una sola vez (en el BFF o, si la petición no pasa por él, en quien la recibe), se devuelve al cliente y se copia tal cual en mensajes y registros. Es información de transporte, no un dato de negocio, y es independiente de la clave de partición. El `trabajo_id` lo complementa en los registros: la correlación sigue **una petición**; el `trabajo_id` sigue **la vida de un trabajo**.
 - **Servicio de dominio destino**: uno de los cinco servicios de atrás (Trabajos, Operaciones/Seguimiento, Acreditación, Emparejamiento, Sagas). Cada grupo de rutas se asocia a exactamente uno.
 - **Respuesta compuesta**: respuesta del BFF que junta partes provenientes de varios servicios. Cada parte tiene un estado: disponible, *todavía no disponible* (consistencia eventual) o *no disponible* (servicio sin respuesta).
 - **Estado de componente**: salud reportada por cada uno de los seis componentes del sistema, agregada en `GET /estado-del-sistema` junto al resumen de sagas por estado.
@@ -207,6 +209,7 @@ Quien mantiene la arquitectura necesita la garantía de que agregar el BFF **no*
 - **SC-010**: 0 vías de comunicación síncrona entre servicios de dominio tras agregar el BFF (toda comunicación entre ellos sigue siendo por eventos); 0 clientes HTTP o variables de entorno hacia otro servicio de dominio o hacia el BFF; 0 entidades de dominio o tablas de negocio con el identificador de correlación.
 - **SC-011**: Una petición que no pasa por el BFF queda identificada en el 100 % de los casos, sea directa a la API de un servicio o publicada por una herramienta externa sin identificador válido.
 - **SC-012**: Desde un clon limpio, todo el sistema (incluido el BFF) se levanta con un solo comando, y la colección de Postman del BFF y la de los servicios corren en verde con `newman` sin intervención manual.
+- **SC-013**: Con una sola búsqueda del `trabajo_id` en los registros se reconstruye la vida de un trabajo a través de al menos dos peticiones (creación y cambio de estado), con dos identificadores de correlación distintos; buscar cada identificador de correlación devuelve solo las líneas de su petición.
 
 ## Assumptions
 

@@ -11,7 +11,7 @@
 | Cabecera HTTP (cliente → BFF, BFF → servicio, BFF → cliente) | `X-Correlation-Id` | Cliente, BFF | BFF, servicios |
 | Sobre del mensaje (campo del contrato Avro) | `correlation_id` | Los mapeadores (pasan `actual()` a `sobre()` / `_sobre()`) | Consumidores |
 | Propiedad del mensaje Pulsar | `correlation_id` | `Despachador._publicar_mensaje` | Consumidores; `pulsar-admin peek-messages` |
-| Línea de registro | `cid=<valor>` | `logging` (fábrica de registros) | Personas; `grep` |
+| Línea de registro | `cid=<valor>` y, si el borde fijó campos, ` trabajo_id=<id>` | `logging` (fábrica de registros) | Personas; `grep` |
 
 Los dos lugares del mensaje (sobre y propiedad) llevan **siempre el mismo valor**: ambos salen de `correlacion.actual()`.
 
@@ -29,6 +29,7 @@ Los dos lugares del mensaje (sobre y propiedad) llevan **siempre el mismo valor*
 | **Servicio, petición HTTP entrante** | `before_request`: lee `X-Correlation-Id` → valida o crea → fija el contexto. `after_request`: lo devuelve. `teardown_request`: restaura |
 | **Servicio, mensaje consumido** | En `correr()`, alrededor de `manejar(...)`: precedencia campo `correlation_id` del sobre → propiedad `correlation_id` → crear. Cubre también el camino de error (`negative_acknowledge`) |
 | **Servicio, mensaje publicado** | `Despachador`: `properties['correlation_id'] = actual()` (sustituye lo que haya pasado el handler). Los mapeadores pasan `correlation_id=actual()` a `sobre()`/`_sobre()`; `sobre()` no cambia (sigue idéntico a `contratos/v1/mensajes.py`) |
+| **Servicio o BFF, línea de registro** | La fábrica de registros escribe `cid=<valor>` y, si el borde fijó campos con `agregar_campos`, ` trabajo_id=<id>`. Los campos se fijan por ruta con `<id>` de trabajo (`campos_ruta`), al inicio del `manejar_*` que recibe `trabajo_id` y donde el servicio genera el id (`_publicar`). Correlación = **una petición**; `trabajo_id` = **la vida del trabajo** (varias peticiones, un `cid=` por cada una). Valores inválidos se descartan; sin valor no se escribe el campo |
 | **Registro** | `%(levelname)s %(name)s \| cid=%(correlation_id)s \| %(message)s`; fuera de contexto, `cid=-` |
 
 ## 4. Lo que NO cambia

@@ -21,6 +21,7 @@ from emparejamiento.config.topicos import (
     topico_evt_trabajo,
 )
 from emparejamiento.seedwork.aplicacion.comandos import ejecutar_comando
+from emparejamiento.seedwork.infraestructura import correlacion
 
 from .schema.v1.evt_acreditacion import AcreditacionActualizada
 from .schema.v1.evt_trabajo import TIPO_CREADO, EventoTrabajo
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 def manejar_evento_trabajo(valor, mensaje):
     from ..aplicacion.comandos.emparejar_trabajo import EmparejarTrabajo
 
+    correlacion.agregar_campos(trabajo_id=valor.trabajo_id)
     if valor.type != TIPO_CREADO:
         logger.info('evt-trabajo ignorado (no es creación): %s', valor.type)
         return
