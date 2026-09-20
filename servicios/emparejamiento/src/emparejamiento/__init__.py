@@ -26,6 +26,7 @@ def _registrar_handlers():
     import emparejamiento.modulos.emparejamiento.aplicacion.handlers  # noqa: F401
     import emparejamiento.modulos.emparejamiento.aplicacion.comandos.actualizar_proveedor_candidato  # noqa: F401
     import emparejamiento.modulos.emparejamiento.aplicacion.comandos.emparejar_trabajo  # noqa: F401
+    import emparejamiento.modulos.emparejamiento.aplicacion.comandos.liberar_reserva  # noqa: F401
     import emparejamiento.modulos.emparejamiento.aplicacion.queries.obtener_candidatos  # noqa: F401
     import emparejamiento.modulos.emparejamiento.aplicacion.queries.obtener_emparejamiento  # noqa: F401
 

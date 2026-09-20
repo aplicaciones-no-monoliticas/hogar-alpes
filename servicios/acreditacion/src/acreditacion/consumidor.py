@@ -88,17 +88,29 @@ def correr(
 
 
 def main():
-    """Acreditación tiene una sola suscripción: `cmd-acreditacion` (Failover)."""
+    """Acreditación tiene dos suscripciones: `cmd-acreditacion` (Failover, el
+    ciclo de vida del agregado) y, desde la Entrega 5, `acreditacion` sobre
+    `evt-emparejamiento` (Shared, D6 de research.md — confirmar/rechazar
+    vigencia). Van en hilos separados, igual que en Emparejamiento."""
     correlacion.instalar_registro()
     logging.basicConfig(
         level=os.getenv('LOG_LEVEL', 'INFO'),
         format='%(levelname)s %(name)s | cid=%(correlation_id)s%(campos)s | %(message)s',
     )
+    import threading
+
     from . import crear_app
-    from .modulos.acreditacion.infraestructura.consumidores import suscribirse
+    from .modulos.acreditacion.infraestructura.consumidores import suscribirse, suscribirse_saga
 
     app = crear_app()
-    suscribirse(app)
+    hilos = [
+        threading.Thread(target=suscribirse, args=(app,), daemon=True),
+        threading.Thread(target=suscribirse_saga, args=(app,), daemon=True),
+    ]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join()
 
 
 if __name__ == '__main__':

@@ -27,3 +27,4 @@ class TrabajoDTO(DTO):
     descripcion: str = ''
     estado: str = ''
     sub_trabajos: list[SubTrabajoDTO] = field(default_factory=list)
+    proveedor_id: str | None = None

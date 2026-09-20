@@ -10,7 +10,7 @@ la especificación):
   indexar aparte.
 - `emparejamientos`: el lado de escritura de la agregación, uno por trabajo.
 """
-from sqlalchemy import Column, Index, Integer, JSON, String
+from sqlalchemy import Column, DateTime, Index, Integer, JSON, String
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -47,3 +47,16 @@ class Emparejamiento(Base):
     ciudad = Column(String(80), nullable=False)
     candidatos = Column(JSON, nullable=False)  # lista de proveedor_id
     total = Column(Integer, nullable=False)
+    proveedor_reservado = Column(String(40), nullable=True)
+
+
+class ReservaProveedor(Base):
+    """Saga (Entrega 5, D1): la PK en `proveedor_id` es la restricción de
+    unicidad que resuelve R5-2 — un proveedor solo puede estar reservado por
+    UN trabajo a la vez."""
+    __tablename__ = 'reservas_proveedor'
+
+    proveedor_id = Column(String(40), primary_key=True)
+    trabajo_id = Column(String(40), nullable=False, index=True)
+    categoria = Column(String(40), nullable=False)
+    reservado_en = Column(DateTime, nullable=False)

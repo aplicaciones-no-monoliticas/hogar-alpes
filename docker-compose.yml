@@ -453,6 +453,47 @@ services:
       ROL_CONSUMIDOR: regional
       REGION: conosur
 
+  # ------------------------------------------------------------- 5 · saga_log
+  # Entrega 5: servicio nuevo, solo observador (CA-1.16, D9 de
+  # specs/002-saga-asignacion-trabajo/research.md). Nace de la misma plantilla
+  # que los otros cuatro; no publica nada, así que no tiene productor propio.
+  postgres-saga:
+    <<: *postgres
+    networks: [red-saga]
+    environment:
+      <<: *pg-env
+      POSTGRES_DB: saga_log
+    volumes:
+      - pgdata-saga:/var/lib/postgresql/data
+
+  saga-log:
+    build: ./servicios/saga_log
+    networks: [red-broker, red-saga, red-bff-saga]
+    environment: &saga-env
+      DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-hogaralpes}:${POSTGRES_PASSWORD:-hogaralpes}@postgres-saga:5432/saga_log
+      BROKER_HOST: broker-1
+      SERVICIO: saga_log
+      MODO: api
+    ports:
+      - "${PUERTO_SAGA:-8004}:5000"
+    depends_on:
+      postgres-saga:
+        condition: service_healthy
+      broker-1:
+        condition: service_healthy
+
+  saga-log-consumidor:
+    build: ./servicios/saga_log
+    networks: [red-broker, red-saga]
+    environment:
+      <<: *saga-env
+      MODO: consumidor
+    depends_on:
+      postgres-saga:
+        condition: service_healthy
+      broker-1:
+        condition: service_healthy
+
   # ------------------------------------------------------------------ BFF
   # Un solo punto de entrada para los clientes (US-02). Sin base de datos, sin
   # broker, sin volúmenes y SIN `depends_on`: debe arrancar aunque un servicio
@@ -486,8 +527,8 @@ networks:
   red-operaciones:
   red-acreditacion:
   red-emparejamiento:
+  red-saga:
   # Una red por par BFF–servicio: cada una tiene solo al BFF y a una API.
-  # `red-bff-saga` queda solo con el BFF hasta que exista `saga-log` (US-01).
   red-bff-trabajos:
   red-bff-operaciones:
   red-bff-acreditacion:
@@ -499,6 +540,7 @@ volumes:
   pgdata-operaciones:
   pgdata-acreditacion:
   pgdata-emparejamiento:
+  pgdata-saga:
   zkdata:
   bookie1data:
   bookie2data:

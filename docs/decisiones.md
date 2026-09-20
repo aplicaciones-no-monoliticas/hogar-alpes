@@ -587,3 +587,32 @@ La plantilla trae seedwork de dominio, SQLAlchemy, Pulsar y un proceso consumido
 | Regresión de la Entrega 4 (la publicación y el consumo de todos los servicios cambiaron) | `escenario-6`: backlog creciente, 350/350 seguimientos, 0 duplicados, 0 huérfanos y suscripciones aisladas en PASA; p95 de `POST /trabajos` 185 ms con el consumidor detenido frente a 173 ms de línea base y 0 % de errores (medido aparte: la medición del propio script no pudo leerse por rutas MSYS en Windows). `escenario-8` reducido: CA-8.1, 8.2 y 8.3 PASA; CA-8.4 no verificable aquí (`agregar-region.sh` viene con CRLF). `mod-2` y `mod-3` PASA. `mod-1.sh` FALLA por dos supuestos previos a esta entrega (un commit histórico y una carpeta de Postman que no corre); a mano, el adaptador en memoria pasa los escenarios 2 y 3 (28 aserciones, 0 fallos). `esquemas.py` y `verificar_contratos.py` (ida y vuelta): `TopicNotFound` por la creación automática de tópicos desactivada. Ninguno se debe al BFF ni a la correlación |
 
 **Pendiente:** todo lo que depende de US-01 (carpetas 5 y 7 de Postman con `saga-log` real, paso `saga-log` de la búsqueda de una saga, CA-2.25 y CA-2.26); `bff-aws` (requiere desplegar en AWS).
+
+## US-01 · Saga de asignación de un trabajo (Entrega 5)
+
+Implementación completa según `specs/002-saga-asignacion-trabajo/` (plan, research D1–D10, data-model, contratos, tasks). Tres decisiones tomadas durante la implementación que no estaban cerradas en el plan técnico:
+
+### 1 · `ConfirmarVigencia` no pasa por la Unidad de Trabajo ni por un evento de dominio
+
+El paso 3 de ida (`vigencia-confirmada`/`vigencia-rechazada`) no muta el agregado `Acreditacion`: es una consulta a la proyección `vigencia_por_proveedor` seguida de una publicación. Se modeló con un objeto `DecisionVigencia` (no un `EventoDominio`) que implementa la misma interfaz que consume `Despachador.publicar_evento` (`MapeadorVigenciaIntegracion.entidad_a_dto`), para reutilizar el mecanismo existente de publicación (y su mock en pruebas) sin forzar una mutación de agregado que no existe.
+
+### 2 · `saga_log`: se retiró `seedwork/infraestructura/despachadores.py` de la copia
+
+CA-1.16 exige que `saga_log` no publique nada. El despachador copiado de `_plantilla` quedó sin ningún importador (verificado con `grep -rl despachadores servicios/saga_log/`), así que se eliminó — es la instrucción explícita de T057 ("quitar/deshabilitar el despachador copiado de `_plantilla` si quedó sin usar"). `config/broker.py` y `seedwork/infraestructura/uow.py` se dejaron intactos (siguen usando `cliente()` para consumir, y son parte del seedwork que MUST duplicarse byte a byte entre servicios); el `grep -rn "create_producer|publicar_evento" servicios/saga_log/src/` de `quickstart.md` todavía encuentra la *definición* de `productor()` en `config/broker.py` y los nombres de método `publicar_eventos_dominio`/`publicar_eventos_integracion` en `uow.py` — ninguno de los dos se invoca desde el código de negocio de `saga_log`; es una coincidencia de substring del comando documentado, no evidencia de publicación real.
+
+### 3 · Postman, carpeta 7: las aserciones "PENDIENTE hasta US-01" se reescribieron
+
+Las cuatro peticiones de "7 · Saga de punta a punta" comparaban un literal contra una lista de literales (`pm.expect('COMPENSADA').to.be.oneOf(['COMPLETADA', 'COMPENSADA'])`) — nunca leían la respuesta real, y las tres peticiones de fallo no mandaban `simular_fallo` en el cuerpo. Se corrigió el cuerpo de las tres (`simular_fallo: SIN_CANDIDATOS/VIGENCIA/ASIGNACION`) y se reemplazó la aserción vacía por una real sobre la respuesta inmediata (`202` + `seguimiento_saga` presente). Verificar el estado FINAL de la saga requiere sondear con espera, que el sandbox de Postman no garantiza de forma confiable; esa verificación queda en `escenarios/saga.sh` (Principio VI: una prueba que no ejercita el camino real, o que se compara contra sí misma, es peor que no tenerla).
+
+### Verificación ejecutada (2026-09-20, sin Docker disponible en el entorno de implementación)
+
+| Qué | Resultado |
+|---|---|
+| `pytest` `gestion_trabajos` · `emparejamiento` · `acreditacion` · `saga_log` | 75 · 38 · 33 · 17 en verde |
+| `pytest` `operaciones` · `bff` (regresión, sin tocar) | 31 · 110 en verde |
+| Simulaciones manuales en proceso (sin broker, sqlite en memoria) de los 4 casos de `quickstart.md` por servicio | Caso 1 (asignación con dos candidatos en competencia), Caso 2 (VIGENCIA), Caso 3 (SIN_CANDIDATOS), Caso 4 (ASIGNACION): los tres servicios producen los pasos y estados finales esperados, incluida la idempotencia ante reentrega (`ConfirmarAsignacion`, `LiberarReserva`) |
+| `python -m py_compile herramientas/verificar_contratos.py` | Sintaxis correcta; **no se ejecutó contra un broker real** (`docker` no disponible en este entorno) |
+| `bash -n infra/pulsar/inicializar.sh`, `bash -n escenarios/saga.sh` | Sintaxis correcta |
+| `python -c "import yaml; yaml.safe_load(...)"` sobre `docker-compose.yml` | YAML válido |
+
+**Pendiente (requiere `docker compose up -d --build` y no se pudo ejecutar en este entorno):** `bash escenarios/saga.sh` contra el sistema real (T062); `newman` de las carpetas 5 y 7 contra el BFF real (T060, la revisión de contenido sí se hizo); regresión completa de `escenarios/escenario-6.sh`, `escenario-8.sh`, `mod-1.sh`/`mod-2.sh`/`mod-3.sh` (T061); `herramientas/verificar_contratos.py` contra un clúster Pulsar real (los dos contratos extendidos, T005).

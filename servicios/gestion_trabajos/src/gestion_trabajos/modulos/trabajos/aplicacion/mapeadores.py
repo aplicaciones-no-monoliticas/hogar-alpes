@@ -49,6 +49,7 @@ class MapeadorTrabajoDTOJson(Mapeador):
             'ubicacion': {'pais': dto.pais, 'ciudad': dto.ciudad, 'direccion': dto.direccion},
             'descripcion': dto.descripcion,
             'estado': dto.estado,
+            'proveedor_id': dto.proveedor_id,
             'sub_trabajos': [
                 {'id': s.id, 'descripcion': s.descripcion, 'categoria': s.categoria, 'estado': s.estado}
                 for s in dto.sub_trabajos
@@ -70,6 +71,7 @@ class MapeadorTrabajoDTOJson(Mapeador):
             direccion=entidad.ubicacion.direccion,
             descripcion=entidad.descripcion,
             estado=entidad.estado.valor.value,
+            proveedor_id=entidad.proveedor_id,
             sub_trabajos=[
                 SubTrabajoDTO(
                     id=str(s.id),

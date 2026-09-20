@@ -5,10 +5,15 @@ from dataclasses import dataclass
 from emparejamiento.seedwork.dominio.excepciones import TipoObjetoNoExisteEnDominioExcepcion
 from emparejamiento.seedwork.dominio.fabricas import Fabrica
 
-from ..dominio.repositorios import RepositorioEmparejamientos, RepositorioProveedoresCandidatos
+from ..dominio.repositorios import (
+    RepositorioEmparejamientos,
+    RepositorioProveedoresCandidatos,
+    RepositorioReservasProveedor,
+)
 from .repositorios import (
     RepositorioEmparejamientosPostgres,
     RepositorioProveedoresCandidatosPostgres,
+    RepositorioReservasProveedorPostgres,
 )
 
 
@@ -19,4 +24,6 @@ class FabricaRepositorio(Fabrica):
             return RepositorioEmparejamientosPostgres()
         if obj == RepositorioProveedoresCandidatos:
             return RepositorioProveedoresCandidatosPostgres()
+        if obj == RepositorioReservasProveedor:
+            return RepositorioReservasProveedorPostgres()
         raise TipoObjetoNoExisteEnDominioExcepcion()

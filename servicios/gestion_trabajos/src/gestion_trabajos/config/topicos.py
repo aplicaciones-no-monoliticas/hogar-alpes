@@ -19,12 +19,16 @@ import os
 
 TENANT = os.getenv('PULSAR_TENANT', 'hogar-alpes')
 NS_TRABAJOS = os.getenv('PULSAR_NS_TRABAJOS', 'trabajos')
+NS_ACREDITACION = os.getenv('PULSAR_NS_ACREDITACION', 'acreditacion')
+NS_EMPAREJAMIENTO = os.getenv('PULSAR_NS_EMPAREJAMIENTO', 'emparejamiento')
 
 # Debe coincidir con la suscripción que `inicializar.sh` pre-crea sobre
 # `cmd-trabajo-{región}`. Si no coincide, la suscripción pre-creada queda
 # huérfana y los comandos publicados antes de que el servicio arranque no se
 # retienen para nadie.
 SUSCRIPCION_COMANDOS = 'gestion-trabajos'
+# Saga (Entrega 5, D6 de specs/002-saga-asignacion-trabajo/research.md).
+SUSCRIPCION_SAGA = 'gestion-trabajos-saga'
 
 REGIONES = {'CO': 'andina', 'MX': 'norteamerica', 'BR': 'conosur', 'AR': 'conosur'}
 REGION_POR_DEFECTO = os.getenv('REGION_POR_DEFECTO', 'andina')
@@ -45,3 +49,11 @@ def patron_cmd_trabajo() -> str:
     """Por patrón, no por región: una réplica cubre las regiones existentes y las
     que se agreguen en caliente (CA-8.4) sin reconfigurar nada."""
     return f'persistent://{TENANT}/{NS_TRABAJOS}/cmd-trabajo-.*'
+
+
+def topico_evt_emparejamiento() -> str:
+    return f'persistent://{TENANT}/{NS_EMPAREJAMIENTO}/evt-emparejamiento'
+
+
+def topico_evt_acreditacion() -> str:
+    return f'persistent://{TENANT}/{NS_ACREDITACION}/evt-acreditacion'

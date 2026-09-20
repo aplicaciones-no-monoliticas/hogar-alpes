@@ -31,8 +31,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from contratos.v1.cmd_acreditacion import SOLICITAR, ComandoAcreditacion  # noqa: E402
 from contratos.v1.cmd_trabajo import TIPO_CREAR, ComandoCrearTrabajo  # noqa: E402
-from contratos.v1.evt_acreditacion import TIPO_ACTUALIZADA, AcreditacionActualizada  # noqa: E402
-from contratos.v1.evt_emparejamiento import TIPO_CANDIDATOS, EventoEmparejamiento  # noqa: E402
+from contratos.v1.evt_acreditacion import (  # noqa: E402
+    TIPO_ACTUALIZADA,
+    TIPO_VIGENCIA_CONFIRMADA,
+    AcreditacionActualizada,
+)
+from contratos.v1.evt_emparejamiento import (  # noqa: E402
+    TIPO_CANDIDATOS,
+    TIPO_PROVEEDOR_PROPUESTO,
+    EventoEmparejamiento,
+)
 from contratos.v1.evt_trabajo import TIPO_CREADO, EventoTrabajo  # noqa: E402
 from contratos.v1.mensajes import CAMPOS_SOBRE, sobre  # noqa: E402
 
@@ -145,6 +153,23 @@ def main():
     verificar('evt-emparejamiento', EventoEmparejamiento, v, trabajo_id,
               {'trabajo_id': trabajo_id, 'region': 'andina',
                'total_candidatos': 3, 'candidatos': candidatos})
+
+    v = dict(sobre(TIPO_PROVEEDOR_PROPUESTO, 'verificador', correlation_id=trabajo_id),
+             trabajo_id=trabajo_id, region='andina', categoria='SINIESTRO_GRANIZO',
+             pais='CO', ciudad='Bogota', total_candidatos=1, candidatos=[proveedor_id],
+             proveedor_id=proveedor_id, motivo='')
+    verificar('evt-emparejamiento-saga', EventoEmparejamiento, v, trabajo_id,
+              {'trabajo_id': trabajo_id, 'proveedor_id': proveedor_id,
+               'type': TIPO_PROVEEDOR_PROPUESTO})
+
+    v = dict(sobre(TIPO_VIGENCIA_CONFIRMADA, 'verificador', correlation_id=proveedor_id),
+             acreditacion_id=acreditacion_id, proveedor_id=proveedor_id, pais='CO',
+             ciudad='Bogota', categorias=['PLOMERIA', 'GAS'], nivel='ORO',
+             estado='ACREDITADA', vigente_hasta='2027-09-11', version=2,
+             trabajo_id=trabajo_id, categoria='PLOMERIA')
+    verificar('evt-acreditacion-saga', AcreditacionActualizada, v, proveedor_id,
+              {'trabajo_id': trabajo_id, 'categoria': 'PLOMERIA',
+               'type': TIPO_VIGENCIA_CONFIRMADA})
 
     print('\n' + '=' * 70)
     if fallos:

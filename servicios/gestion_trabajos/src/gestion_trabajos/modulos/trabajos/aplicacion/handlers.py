@@ -30,10 +30,16 @@ from gestion_trabajos.seedwork.infraestructura.despachadores import Despachador
 from ..infraestructura.mapeadores import MapeadorEventosTrabajo
 
 def _propiedades(evento) -> dict:
-    return {
+    propiedades = {
         'partner_id': getattr(evento, 'partner_id', None),
         'region': region(getattr(evento, 'pais', None)),
     }
+    # Marca de demostración de la saga (D3 de research.md): nunca es parte del
+    # esquema Avro, solo viaja como propiedad, y solo si el productor la trajo.
+    simular_fallo = getattr(evento, 'simular_fallo', '')
+    if simular_fallo:
+        propiedades['simular_fallo'] = simular_fallo
+    return propiedades
 
 
 def _publicar(evento):

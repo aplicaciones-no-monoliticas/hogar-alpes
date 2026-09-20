@@ -29,6 +29,7 @@ class Trabajo(Base):
     direccion = Column(String(200), nullable=False)
     descripcion = Column(Text, nullable=True)
     estado = Column(String(30), nullable=False, index=True)
+    proveedor_id = Column(String(40), nullable=True)
 
     sub_trabajos = relationship(
         'SubTrabajo', cascade='all, delete-orphan', lazy='joined'

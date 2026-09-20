@@ -15,6 +15,7 @@ import logging
 
 from emparejamiento.config.topicos import (
     SUSCRIPCION_PROYECCION,
+    SUSCRIPCION_SAGA,
     region,
     suscripcion_regional,
     topico_evt_acreditacion,
@@ -23,28 +24,41 @@ from emparejamiento.config.topicos import (
 from emparejamiento.seedwork.aplicacion.comandos import ejecutar_comando
 from emparejamiento.seedwork.infraestructura import correlacion
 
-from .schema.v1.evt_acreditacion import AcreditacionActualizada
-from .schema.v1.evt_trabajo import TIPO_CREADO, EventoTrabajo
+from .schema.v1.evt_acreditacion import TIPO_VIGENCIA_RECHAZADA, AcreditacionActualizada
+from .schema.v1.evt_trabajo import TIPO_CREADO, TIPO_ESTADO_CAMBIADO, EventoTrabajo
 
 logger = logging.getLogger(__name__)
 
 
 def manejar_evento_trabajo(valor, mensaje):
     from ..aplicacion.comandos.emparejar_trabajo import EmparejarTrabajo
+    from ..aplicacion.comandos.liberar_reserva import LiberarReserva
 
     correlacion.agregar_campos(trabajo_id=valor.trabajo_id)
-    if valor.type != TIPO_CREADO:
-        logger.info('evt-trabajo ignorado (no es creación): %s', valor.type)
+
+    if valor.type == TIPO_CREADO:
+        simular_fallo = (mensaje.properties() or {}).get('simular_fallo', '')
+        ejecutar_comando(EmparejarTrabajo(
+            trabajo_id=valor.trabajo_id,
+            region=region(),
+            categoria=valor.categoria,
+            pais=valor.pais,
+            ciudad=valor.ciudad,
+            simular_fallo=simular_fallo,
+        ))
+        logger.info('evt-trabajo procesado: trabajo_id=%s region=%s', valor.trabajo_id, region())
         return
 
-    ejecutar_comando(EmparejarTrabajo(
-        trabajo_id=valor.trabajo_id,
-        region=region(),
-        categoria=valor.categoria,
-        pais=valor.pais,
-        ciudad=valor.ciudad,
-    ))
-    logger.info('evt-trabajo procesado: trabajo_id=%s region=%s', valor.trabajo_id, region())
+    if valor.type == TIPO_ESTADO_CAMBIADO and valor.estado == 'CANCELADO':
+        # Saga (US2, T041): falla en la asignación final (`ASIGNACION`) — GT ya
+        # canceló el trabajo sin publicar `vigencia-rechazada`; si este servicio
+        # todavía tiene una reserva activa para él, es la única señal de que
+        # debe liberarla. No-op si ya se liberó (idempotente).
+        ejecutar_comando(LiberarReserva(trabajo_id=valor.trabajo_id, motivo='ASIGNACION_FALLIDA'))
+        logger.info('evt-trabajo (cancelado) procesado: trabajo_id=%s', valor.trabajo_id)
+        return
+
+    logger.info('evt-trabajo ignorado: %s', valor.type)
 
 
 def manejar_evento_acreditacion(valor, mensaje):
@@ -68,6 +82,22 @@ def manejar_evento_acreditacion(valor, mensaje):
     )
 
 
+def manejar_evento_acreditacion_saga(valor, mensaje):
+    """Suscripción `emparejamiento-saga` sobre `evt-acreditacion` (D6): solo le
+    importa `vigencia-rechazada`, lo demás lo descarta por `type` sin tocar
+    ninguna lógica de negocio (mismo patrón que `manejar_evento_acreditacion`)."""
+    from ..aplicacion.comandos.liberar_reserva import LiberarReserva
+
+    if valor.type != TIPO_VIGENCIA_RECHAZADA:
+        logger.info('evt-acreditacion (saga) ignorado: %s', valor.type)
+        return
+
+    correlacion.agregar_campos(trabajo_id=valor.trabajo_id)
+    ejecutar_comando(LiberarReserva(trabajo_id=valor.trabajo_id, motivo='VIGENCIA_RECHAZADA'))
+    logger.info('vigencia-rechazada procesada: trabajo_id=%s proveedor_id=%s',
+                valor.trabajo_id, valor.proveedor_id)
+
+
 def suscribirse_regional(app):
     from emparejamiento.consumidor import correr
 
@@ -88,5 +118,20 @@ def suscribirse_proyeccion(app):
         SUSCRIPCION_PROYECCION,
         AcreditacionActualizada,
         manejar_evento_acreditacion,
+        app=app,
+    )
+
+
+def suscribirse_saga(app):
+    import pulsar
+
+    from emparejamiento.consumidor import correr
+
+    correr(
+        [topico_evt_acreditacion()],
+        SUSCRIPCION_SAGA,
+        AcreditacionActualizada,
+        manejar_evento_acreditacion_saga,
+        tipo=pulsar.ConsumerType.Shared,
         app=app,
     )

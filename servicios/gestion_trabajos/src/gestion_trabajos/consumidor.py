@@ -22,16 +22,31 @@ def main():
         format='%(levelname)s %(name)s | cid=%(correlation_id)s%(campos)s | %(message)s',
     )
 
+    import threading
+
     from gestion_trabajos import crear_app
     from gestion_trabajos.modulos.trabajos.infraestructura.consumidores import (
         suscribirse_a_comandos,
+        suscribirse_saga_acreditacion,
+        suscribirse_saga_emparejamiento,
     )
 
     # La aplicación se crea para tener contexto de base de datos, no para servir
     # HTTP: este proceso no escucha en ningún puerto.
     app = crear_app()
     logging.getLogger(__name__).info('Proceso consumidor de Gestión de Trabajos')
-    suscribirse_a_comandos(app)
+
+    # Saga (Entrega 5): dos suscripciones nuevas, cada una en su propio hilo,
+    # igual que en Emparejamiento y Acreditación.
+    hilos = [
+        threading.Thread(target=suscribirse_a_comandos, args=(app,), daemon=True),
+        threading.Thread(target=suscribirse_saga_emparejamiento, args=(app,), daemon=True),
+        threading.Thread(target=suscribirse_saga_acreditacion, args=(app,), daemon=True),
+    ]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join()
 
 
 if __name__ == '__main__':

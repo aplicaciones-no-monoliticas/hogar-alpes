@@ -22,3 +22,17 @@ class EventoAcreditacion(Base):
     tipo = Column(String(60), nullable=False)
     datos = Column(JSON, nullable=False)
     ocurrido_en = Column(DateTime, nullable=False)
+
+
+class VigenciaPorProveedor(Base):
+    """Saga (Entrega 5, D4 de research.md): proyección de lectura interna,
+    propia de Acreditación — no es la del event store ni la de Emparejamiento.
+    Se actualiza junto con cada evento que ya se escribe en
+    `eventos_acreditacion` (mismo `agregar`, misma transacción)."""
+    __tablename__ = 'vigencia_por_proveedor'
+
+    proveedor_id = Column(String(40), primary_key=True)
+    categoria = Column(String(40), primary_key=True)
+    estado = Column(String(20), nullable=False)
+    vigente_hasta = Column(String(10), nullable=False)  # ISO-8601, comparable como texto
+    version = Column(Integer, nullable=False)

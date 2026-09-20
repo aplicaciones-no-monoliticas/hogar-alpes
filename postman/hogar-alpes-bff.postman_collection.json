@@ -1151,9 +1151,13 @@
                 "exec": [
                   "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
                   "pm.collectionVariables.set('trabajoSagaId', pm.response.json().id);",
-                  "pm.test('PENDIENTE hasta US-01: el estado final esperado es COMPLETADA', () => {",
-                  "    pm.expect('COMPLETADA').to.be.oneOf(['COMPLETADA', 'COMPENSADA']);",
-                  "});"
+                  "pm.test('la respuesta trae dónde seguir la saga', () => {",
+                  "    pm.expect(pm.response.json()).to.have.property('seguimiento_saga');",
+                  "});",
+                  "// El estado final (COMPLETADA) se ejecuta de forma asíncrona por la saga",
+                  "// coreografiada (US-01): verificarlo aquí requeriría sondear con espera, que",
+                  "// el sandbox de Postman no garantiza. La verificación real y releída del",
+                  "// broker/DB está en `escenarios/saga.sh` (Principio VI)."
                 ]
               }
             }
@@ -1185,7 +1189,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\",\n  \"simular_fallo\": \"SIN_CANDIDATOS\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1211,9 +1215,13 @@
                 "exec": [
                   "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
                   "pm.collectionVariables.set('trabajoSagaId', pm.response.json().id);",
-                  "pm.test('PENDIENTE hasta US-01: el estado final esperado es COMPENSADA', () => {",
-                  "    pm.expect('COMPENSADA').to.be.oneOf(['COMPLETADA', 'COMPENSADA']);",
-                  "});"
+                  "pm.test('la respuesta trae dónde seguir la saga', () => {",
+                  "    pm.expect(pm.response.json()).to.have.property('seguimiento_saga');",
+                  "});",
+                  "// El estado final (COMPENSADA) se ejecuta de forma asíncrona por la saga",
+                  "// coreografiada (US-01): verificarlo aquí requeriría sondear con espera, que",
+                  "// el sandbox de Postman no garantiza. La verificación real y releída del",
+                  "// broker/DB está en `escenarios/saga.sh` (Principio VI)."
                 ]
               }
             }
@@ -1245,7 +1253,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\",\n  \"simular_fallo\": \"VIGENCIA\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1271,9 +1279,13 @@
                 "exec": [
                   "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
                   "pm.collectionVariables.set('trabajoSagaId', pm.response.json().id);",
-                  "pm.test('PENDIENTE hasta US-01: el estado final esperado es COMPENSADA', () => {",
-                  "    pm.expect('COMPENSADA').to.be.oneOf(['COMPLETADA', 'COMPENSADA']);",
-                  "});"
+                  "pm.test('la respuesta trae dónde seguir la saga', () => {",
+                  "    pm.expect(pm.response.json()).to.have.property('seguimiento_saga');",
+                  "});",
+                  "// El estado final (COMPENSADA) se ejecuta de forma asíncrona por la saga",
+                  "// coreografiada (US-01): verificarlo aquí requeriría sondear con espera, que",
+                  "// el sandbox de Postman no garantiza. La verificación real y releída del",
+                  "// broker/DB está en `escenarios/saga.sh` (Principio VI)."
                 ]
               }
             }
@@ -1305,7 +1317,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\"\n}",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"CO\",\n  \"ciudad\": \"Bogota\",\n  \"direccion\": \"Cra 7 # 45-10\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"Fuga en la cocina\",\n  \"simular_fallo\": \"ASIGNACION\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1331,9 +1343,13 @@
                 "exec": [
                   "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
                   "pm.collectionVariables.set('trabajoSagaId', pm.response.json().id);",
-                  "pm.test('PENDIENTE hasta US-01: el estado final esperado es COMPENSADA', () => {",
-                  "    pm.expect('COMPENSADA').to.be.oneOf(['COMPLETADA', 'COMPENSADA']);",
-                  "});"
+                  "pm.test('la respuesta trae dónde seguir la saga', () => {",
+                  "    pm.expect(pm.response.json()).to.have.property('seguimiento_saga');",
+                  "});",
+                  "// El estado final (COMPENSADA) se ejecuta de forma asíncrona por la saga",
+                  "// coreografiada (US-01): verificarlo aquí requeriría sondear con espera, que",
+                  "// el sandbox de Postman no garantiza. La verificación real y releída del",
+                  "// broker/DB está en `escenarios/saga.sh` (Principio VI)."
                 ]
               }
             }
