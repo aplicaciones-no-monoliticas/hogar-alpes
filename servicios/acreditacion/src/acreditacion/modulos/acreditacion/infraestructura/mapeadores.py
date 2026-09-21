@@ -53,6 +53,10 @@ class MapeadorAcreditacionIntegracion:
             estado=evento.estado,
             vigente_hasta=evento.vigente_hasta,
             version=evento.version,
+            # D8 de research.md: vacío en el snapshot — no pertenece a
+            # ninguna saga.
+            trabajo_id='',
+            categoria='',
         )
         return mensaje, AcreditacionActualizada
 

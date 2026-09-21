@@ -32,5 +32,5 @@ class AcreditacionActualizada(Record):
     vigente_hasta = String(default=None, required_default=True)
     version = Long(default=None, required_default=True)
     # --- saga (Entrega 5) ---
-    trabajo_id = String(default='', required_default=True)
-    categoria = String(default='', required_default=True)
+    trabajo_id = String(default=None, required_default=True)
+    categoria = String(default=None, required_default=True)

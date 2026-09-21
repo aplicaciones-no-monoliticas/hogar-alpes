@@ -60,6 +60,8 @@ class MapeadorEmparejamientoIntegracion:
                 ciudad=evento.ciudad,
                 total_candidatos=len(evento.proveedores_id),
                 candidatos=list(evento.proveedores_id),
+                proveedor_id='',
+                motivo='',
             )
             return mensaje, EventoEmparejamiento
 
@@ -73,6 +75,8 @@ class MapeadorEmparejamientoIntegracion:
                 ciudad=evento.ciudad,
                 total_candidatos=0,
                 candidatos=[],
+                proveedor_id='',
+                motivo='',
             )
             return mensaje, EventoEmparejamiento
 
@@ -87,6 +91,7 @@ class MapeadorEmparejamientoIntegracion:
                 total_candidatos=len(evento.candidatos),
                 candidatos=list(evento.candidatos),
                 proveedor_id=evento.proveedor_id,
+                motivo='',
             )
             return mensaje, EventoEmparejamiento
 

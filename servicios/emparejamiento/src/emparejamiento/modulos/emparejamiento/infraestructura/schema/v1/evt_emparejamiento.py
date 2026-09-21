@@ -38,5 +38,5 @@ class EventoEmparejamiento(Record):
     total_candidatos = Long(default=None, required_default=True)
     candidatos = Array(String(), default=None, required_default=True)
     # --- saga (Entrega 5) ---
-    proveedor_id = String(default='', required_default=True)
-    motivo = String(default='', required_default=True)
+    proveedor_id = String(default=None, required_default=True)
+    motivo = String(default=None, required_default=True)

@@ -616,3 +616,19 @@ Las cuatro peticiones de "7 · Saga de punta a punta" comparaban un literal cont
 | `python -c "import yaml; yaml.safe_load(...)"` sobre `docker-compose.yml` | YAML válido |
 
 **Pendiente (requiere `docker compose up -d --build` y no se pudo ejecutar en este entorno):** `bash escenarios/saga.sh` contra el sistema real (T062); `newman` de las carpetas 5 y 7 contra el BFF real (T060, la revisión de contenido sí se hizo); regresión completa de `escenarios/escenario-6.sh`, `escenario-8.sh`, `mod-1.sh`/`mod-2.sh`/`mod-3.sh` (T061); `herramientas/verificar_contratos.py` contra un clúster Pulsar real (los dos contratos extendidos, T005).
+
+### 4 · Defecto real encontrado al levantar el clúster: `default=''` no es un default válido para un campo Avro nullable
+
+Al correr T062 contra un broker real, `broker-1` rechazó el registro de esquema de `evt-acreditacion`:
+
+```
+org.apache.avro.AvroTypeException: Invalid default for field trabajo_id: "" not a ["null","string"]
+```
+
+`pulsar.schema.String(...)` genera siempre un tipo Avro `["null", "string"]` (nullable), sin importar el valor de `required_default`; la especificación Avro exige que el *default* de un campo `union` tenga el tipo de la **primera** rama de la unión — aquí `null`, no `string`. Los ocho campos del sobre y todos los campos preexistentes usan `default=None` por esta misma razón (nunca `default=''`); los cuatro campos nuevos de esta entrega (`proveedor_id`, `motivo`, `trabajo_id`, `categoria`) se declararon con `default=''` por error, algo que ninguna prueba local podía atrapar porque `pytest` nunca construye el `AvroSchema` real.
+
+**Corrección:** los cuatro campos, en los nueve archivos donde existen (`contratos/v1/` × 2 más las siete copias locales), pasan a `default=None, required_default=True)`, igual que el resto del contrato. En el código que construye estos mensajes, donde antes se omitía el campo confiando en el default (`CandidatosIdentificados`, `SinCandidatos`, `AcreditacionActualizada` del tipo `actualizada`), ahora se pasa explícitamente `''` — así el valor que viaja por cable sigue siendo el que documentan `data-model.md`/`contracts/` ("vacío"), no `null`.
+
+**Verificado sin broker** (2026-09-21): `AvroSchema(cls)` seguido de `fastavro.parse_schema(json.loads(...))` sobre los 9 archivos (2 contratos canónicos + 7 copias locales) — los 9 parsean sin excepción. Las 163 pruebas de `pytest` de los cuatro servicios tocados y `saga_log` siguen en verde. **Pendiente:** confirmar el registro real contra el broker (`docker compose up -d --build` + `herramientas/verificar_contratos.py`, T005/T061/T062).
+
+**Lección para la próxima entrega:** ningún campo Avro nuevo debería declararse sin al menos construir su `AvroSchema(...)` una vez en una prueba (no hace falta un broker, `fastavro.parse_schema` ya detecta este defecto) — la regla de INF-0 ("todo campo `Tipo(default=..., required_default=True)`") implícitamente exige `default=None` para tipos `String`/`Long`/`Array`, no cualquier valor falsy.
