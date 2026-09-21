@@ -1,0 +1,80 @@
+# ZooKeeper — 1 réplica, igual que docker-compose.yml. Guarda los metadatos
+# del clúster de Pulsar (data-model.md).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+  labels: { app: zookeeper, tier: pulsar }
+spec:
+  serviceName: zookeeper
+  replicas: 1
+  selector:
+    matchLabels: { app: zookeeper }
+  template:
+    metadata:
+      labels: { app: zookeeper, tier: pulsar }
+    spec:
+      # La imagen corre como uid 10000/gid 0; un volumen EBS nuevo se monta
+      # root:root 0755 (sin permiso de escritura para el grupo) y el proceso
+      # muere con "Unable to create data directory". fsGroup hace que kubelet
+      # asigne el volumen al grupo 0 con permiso de escritura al montarlo.
+      securityContext:
+        fsGroup: 0
+      containers:
+        - name: zookeeper
+          image: apachepulsar/pulsar:3.2.2
+          command: ["bash", "-c"]
+          args:
+            - >
+              bin/apply-config-from-env.py conf/zookeeper.conf &&
+              bin/generate-zookeeper-config.sh conf/zookeeper.conf &&
+              exec bin/pulsar zookeeper
+          env:
+            - name: metadataStoreUrl
+              value: "zk:zookeeper:2181"
+            - name: PULSAR_MEM
+              value: "-Xms256m -Xmx512m"
+          ports:
+            - containerPort: 2181
+              name: client
+          # timeoutSeconds explícito: el default (1s) no le alcanza a este
+          # script sobre una JVM ya cargada — el proceso está sano (los
+          # registros muestran "ruok" respondido), pero el exec probe
+          # expiraba antes de que el script terminara.
+          readinessProbe:
+            exec:
+              command: ["bin/pulsar-zookeeper-ruok.sh"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["bin/pulsar-zookeeper-ruok.sh"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 10
+          volumeMounts:
+            - name: zkdata
+              mountPath: /pulsar/data
+  volumeClaimTemplates:
+    - metadata:
+        name: zkdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  labels: { app: zookeeper }
+spec:
+  clusterIP: None
+  selector: { app: zookeeper }
+  ports:
+    - port: 2181
+      name: client

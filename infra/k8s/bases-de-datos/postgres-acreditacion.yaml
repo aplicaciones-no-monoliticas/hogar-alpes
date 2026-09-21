@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-acreditacion
+  labels: { app: postgres-acreditacion, tier: db }
+spec:
+  serviceName: postgres-acreditacion
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres-acreditacion }
+  template:
+    metadata:
+      labels: { app: postgres-acreditacion, tier: db }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: postgres-acreditacion-credenciales, key: usuario } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-acreditacion-credenciales, key: password } }
+            - name: PGDATA
+              value: "/var/lib/postgresql/data/pgdata"
+            - name: POSTGRES_DB
+              value: "acreditacion"
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "$(POSTGRES_USER)"] }
+            periodSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "$(POSTGRES_USER)"] }
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-acreditacion
+  labels: { app: postgres-acreditacion }
+spec:
+  clusterIP: None
+  selector: { app: postgres-acreditacion }
+  ports:
+    - port: 5432
+      name: postgres

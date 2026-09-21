@@ -1,0 +1,12 @@
+# StorageClass gp3 sobre el driver CSI de EBS (add-on aws-ebs-csi-driver,
+# habilitado en infra/aws/terraform-eks/main.tf). Todos los PersistentVolumeClaim
+# de esta historia lo referencian (FR-016).
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+parameters:
+  type: gp3

@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acreditacion-api
+  labels: { app: acreditacion-api, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: acreditacion-api }
+  template:
+    metadata:
+      labels: { app: acreditacion-api, tier: app, servicio: acreditacion }
+    spec:
+      containers:
+        - name: acreditacion
+          image: PLACEHOLDER_ECR/hogar-alpes/acreditacion:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-acreditacion-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "acreditacion"
+            - name: MODO
+              value: "api"
+          ports:
+            - containerPort: 5000
+              name: http
+          readinessProbe:
+            httpGet: { path: /health, port: 5000 }
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: 5000 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acreditacion-api
+  labels: { app: acreditacion-api }
+spec:
+  selector: { app: acreditacion-api }
+  ports:
+    - port: 5000
+      name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acreditacion-consumidor
+  labels: { app: acreditacion-consumidor, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: acreditacion-consumidor }
+  template:
+    metadata:
+      labels: { app: acreditacion-consumidor, tier: app, servicio: acreditacion }
+    spec:
+      containers:
+        - name: acreditacion-consumidor
+          image: PLACEHOLDER_ECR/hogar-alpes/acreditacion:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-acreditacion-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "acreditacion"
+            - name: MODO
+              value: "consumidor"
+          livenessProbe:
+            exec: { command: ["pgrep", "-f", "consumidor"] }
+            initialDelaySeconds: 10
+            periodSeconds: 20

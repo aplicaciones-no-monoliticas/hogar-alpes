@@ -1,0 +1,47 @@
+# Default-deny de ingreso para las cinco bases de datos (data-model.md
+# §Reglas de red). Sin esto, cualquier pod del clúster alcanza cualquier
+# base por defecto (R5-12) — es la regla más importante de esta historia.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default-postgres-trabajos
+spec:
+  podSelector: { matchLabels: { app: postgres-trabajos } }
+  policyTypes: ["Ingress"]
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default-postgres-operaciones
+spec:
+  podSelector: { matchLabels: { app: postgres-operaciones } }
+  policyTypes: ["Ingress"]
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default-postgres-acreditacion
+spec:
+  podSelector: { matchLabels: { app: postgres-acreditacion } }
+  policyTypes: ["Ingress"]
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default-postgres-emparejamiento
+spec:
+  podSelector: { matchLabels: { app: postgres-emparejamiento } }
+  policyTypes: ["Ingress"]
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default-postgres-saga
+spec:
+  podSelector: { matchLabels: { app: postgres-saga } }
+  policyTypes: ["Ingress"]
+  ingress: []

@@ -1,0 +1,28 @@
+# Equivalente al servicio `pulsar-init` de docker-compose.yml: registra el
+# clúster en los metadatos de ZooKeeper. Corre una sola vez, antes que los
+# bookies (mismo orden que Compose vía depends_on).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pulsar-cluster-init
+  labels: { app: pulsar-cluster-init, tier: pulsar }
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels: { app: pulsar-cluster-init }
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: pulsar-init
+          image: apachepulsar/pulsar:3.2.2
+          command: ["bash", "-c"]
+          args:
+            - >
+              bin/pulsar initialize-cluster-metadata
+              --cluster cluster-hda
+              --metadata-store zk:zookeeper:2181
+              --configuration-metadata-store zk:zookeeper:2181
+              --web-service-url http://broker:8080
+              --broker-service-url pulsar://broker:6650
+              || echo 'metadatos ya inicializados'

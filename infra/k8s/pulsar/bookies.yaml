@@ -1,0 +1,85 @@
+# Bookies — 2 réplicas, el componente más delicado de la historia (R5-11).
+# Ensemble=2/write=2/ack=2 (fijado en brokers.yaml) exige los dos bookies
+# sanos para confirmar una escritura: por eso cada uno necesita su propio
+# PersistentVolumeClaim que sobreviva a que se elimine el pod (CA-3.18).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: bookie
+  labels: { app: bookie, tier: pulsar }
+spec:
+  serviceName: bookie
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: { app: bookie }
+  template:
+    metadata:
+      labels: { app: bookie, tier: pulsar }
+    spec:
+      # Mismo motivo que zookeeper.yaml: la imagen corre uid 10000/gid 0 y
+      # necesita permiso de escritura sobre el volumen EBS nuevo.
+      securityContext:
+        fsGroup: 0
+      containers:
+        - name: bookie
+          image: apachepulsar/pulsar:3.2.2
+          command: ["bash", "-c"]
+          args:
+            - >
+              bin/apply-config-from-env.py conf/bookkeeper.conf &&
+              exec bin/pulsar bookie
+          env:
+            - name: clusterName
+              value: "cluster-hda"
+            - name: zkServers
+              value: "zookeeper:2181"
+            - name: metadataServiceUri
+              value: "metadata-store:zk:zookeeper:2181"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+            - name: advertisedAddress
+              value: "$(POD_NAME).bookie"
+            - name: diskUsageThreshold
+              value: "0.99"
+            - name: diskUsageWarnThreshold
+              value: "0.99"
+            - name: BOOKIE_MEM
+              value: "-Xms256m -Xmx512m -XX:MaxDirectMemorySize=256m"
+          ports:
+            - containerPort: 3181
+              name: bookie
+          volumeMounts:
+            - name: bookiedata
+              mountPath: /pulsar/data
+          readinessProbe:
+            tcpSocket: { port: 3181 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket: { port: 3181 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+  volumeClaimTemplates:
+    - metadata:
+        name: bookiedata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bookie
+  labels: { app: bookie }
+spec:
+  clusterIP: None
+  selector: { app: bookie }
+  ports:
+    - port: 3181
+      name: bookie

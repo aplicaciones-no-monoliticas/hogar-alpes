@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emparejamiento-api
+  labels: { app: emparejamiento-api, tier: app }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: emparejamiento-api }
+  template:
+    metadata:
+      labels: { app: emparejamiento-api, tier: app, servicio: emparejamiento }
+    spec:
+      containers:
+        - name: emparejamiento
+          image: PLACEHOLDER_ECR/hogar-alpes/emparejamiento:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-emparejamiento-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "emparejamiento"
+            - name: MODO
+              value: "api"
+            - name: REGION
+              value: "andina"
+          ports:
+            - containerPort: 5000
+              name: http
+          readinessProbe:
+            httpGet: { path: /health, port: 5000 }
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: 5000 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: emparejamiento-api
+  labels: { app: emparejamiento-api }
+spec:
+  selector: { app: emparejamiento-api }
+  ports:
+    - port: 5000
+      name: http
+---
+# Proyección de proveedores: una sola réplica, consume evt-acreditacion.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emparejamiento-proyeccion
+  labels: { app: emparejamiento-proyeccion, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: emparejamiento-proyeccion }
+  template:
+    metadata:
+      labels: { app: emparejamiento-proyeccion, tier: app, servicio: emparejamiento }
+    spec:
+      containers:
+        - name: emparejamiento-proyeccion
+          image: PLACEHOLDER_ECR/hogar-alpes/emparejamiento:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-emparejamiento-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "emparejamiento"
+            - name: MODO
+              value: "consumidor"
+            - name: ROL_CONSUMIDOR
+              value: "proyeccion"
+          livenessProbe:
+            exec: { command: ["pgrep", "-f", "consumidor"] }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+# Un Deployment por región — unidad de despliegue del escenario 8 (CA-3.21).
+# Escalar una región: kubectl scale deployment/emparejamiento-andina --replicas=4
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emparejamiento-andina
+  labels: { app: emparejamiento-andina, tier: app, region: andina }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: emparejamiento-andina }
+  template:
+    metadata:
+      labels: { app: emparejamiento-andina, tier: app, servicio: emparejamiento, region: andina }
+    spec:
+      containers:
+        - name: emparejamiento-andina
+          image: PLACEHOLDER_ECR/hogar-alpes/emparejamiento:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-emparejamiento-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "emparejamiento"
+            - name: MODO
+              value: "consumidor"
+            - name: ROL_CONSUMIDOR
+              value: "regional"
+            - name: REGION
+              value: "andina"
+          livenessProbe:
+            exec: { command: ["pgrep", "-f", "consumidor"] }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emparejamiento-norteamerica
+  labels: { app: emparejamiento-norteamerica, tier: app, region: norteamerica }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: emparejamiento-norteamerica }
+  template:
+    metadata:
+      labels: { app: emparejamiento-norteamerica, tier: app, servicio: emparejamiento, region: norteamerica }
+    spec:
+      containers:
+        - name: emparejamiento-norteamerica
+          image: PLACEHOLDER_ECR/hogar-alpes/emparejamiento:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-emparejamiento-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "emparejamiento"
+            - name: MODO
+              value: "consumidor"
+            - name: ROL_CONSUMIDOR
+              value: "regional"
+            - name: REGION
+              value: "norteamerica"
+          livenessProbe:
+            exec: { command: ["pgrep", "-f", "consumidor"] }
+            initialDelaySeconds: 10
+            periodSeconds: 20
