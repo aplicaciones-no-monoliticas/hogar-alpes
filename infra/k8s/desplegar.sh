@@ -71,7 +71,7 @@ kubectl rollout status deployment/broker --timeout=300s
 echo; echo "--- Pulsar: tenant/namespaces/tópicos/suscripciones (Job, reutiliza inicializar.sh)"
 kubectl delete job pulsar-topology-init --ignore-not-found
 kubectl apply -f "$DIR/pulsar/job-topology-init.yaml"
-kubectl wait --for=condition=complete job/pulsar-topology-init --timeout=180s
+kubectl wait --for=condition=complete job/pulsar-topology-init --timeout=300s
 
 echo; echo "--- Servicios de dominio (imágenes: ${REGISTRO}, tag ${TAG})"
 for archivo in "$DIR"/servicios/gestion-trabajos.yaml "$DIR"/servicios/operaciones.yaml \
