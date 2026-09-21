@@ -8,9 +8,14 @@
 #   docker compose up -d --build
 #   bash escenarios/saga.sh
 #
-# Requiere al menos un proveedor ACREDITADA y vigente cargado para el Caso 1
-# (ver quickstart.md · Prerrequisitos). Si no hay ninguno, el Caso 1 falla con
-# un mensaje explícito en vez de un PASA falso.
+# Cada caso que necesita reservar a alguien (1, 2 y 4) se aprovisiona su
+# PROPIO proveedor ACREDITADA y vigente, recién creado — un proveedor solo
+# puede asignarse con éxito UNA vez (revocar la ocupación al terminar el
+# trabajo es la saga D, fuera de alcance de esta entrega, ver data-model.md),
+# así que reutilizar uno viejo entre corridas haría fallar el Caso 1 de forma
+# silenciosa. No hace falta ningún prerrequisito manual: el script deja todo
+# listo antes de cada caso y relee la proyección de Emparejamiento (no un
+# `sleep` a ciegas) para confirmar que el proveedor ya está disponible.
 
 set -uo pipefail
 
@@ -39,6 +44,39 @@ criterio() {
     resultado "  FALLA  $id · $detalle"
     fallos=$((fallos + 1))
   fi
+}
+
+acreditacion_id_de() {
+  python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("id",""))
+except Exception: print("")' 2>/dev/null
+}
+
+# Crea, aprueba y espera (releído de la proyección real, Principio VI) un
+# proveedor ACREDITADA + vigente nuevo para CATEGORIA/CO/Bogota. Imprime su
+# proveedor_id por stdout; no imprime nada si no se pudo dejarlo listo a
+# tiempo — el llamador debe comprobar que la salida no esté vacía.
+preparar_proveedor() {
+  local sufijo="$1"
+  local proveedor_id="saga-sh-${FECHA}-${sufijo}"
+  local cuerpo acreditacion_id
+
+  cuerpo=$(printf '{"proveedor_id":"%s","pais":"CO","ciudad":"Bogota","categorias":["%s"],"nivel":"ORO","vigencia_meses":12}' "$proveedor_id" "$CATEGORIA")
+  acreditacion_id="$(curl -s -X POST "$URL_BFF/acreditaciones" -H 'Content-Type: application/json' -d "$cuerpo" | acreditacion_id_de)"
+  if [ -z "$acreditacion_id" ]; then
+    return 1
+  fi
+  curl -s -X PUT "$URL_BFF/acreditaciones/$acreditacion_id/aprobar" \
+    -H 'Content-Type: application/json' -d '{"motivo":"escenarios/saga.sh"}' >/dev/null
+
+  for _ in $(seq 1 "$ESPERA_MAX_S"); do
+    if curl -s "$URL_BFF/candidatos?categoria=$CATEGORIA&pais=CO&ciudad=Bogota" | grep -q "\"$proveedor_id\""; then
+      echo "$proveedor_id"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 crear_trabajo() {
@@ -106,15 +144,22 @@ resultado "URL_BFF=$URL_BFF · URL_GT=$URL_GT · URL_SAGA=$URL_SAGA · CATEGORIA
 resultado ""
 resultado "## Caso 1 — Camino feliz"
 
-respuesta1="$(crear_trabajo '')"
-t1="$(echo "$respuesta1" | trabajo_id_de)"
+proveedor1_preparado="$(preparar_proveedor caso1)"
+if [ -z "$proveedor1_preparado" ]; then
+  criterio CASO-1a 1 "no se pudo dejar listo un proveedor ACREDITADA/vigente para $CATEGORIA/CO/Bogota en ${ESPERA_MAX_S}s (¿acreditacion o la proyección de emparejamiento están caídas?)"
+  t1=""
+else
+  resultado "  (preparación) proveedor $proveedor1_preparado ACREDITADA y visible en /candidatos"
+  respuesta1="$(crear_trabajo '')"
+  t1="$(echo "$respuesta1" | trabajo_id_de)"
+fi
 if [ -z "$t1" ]; then
-  criterio CASO-1a 1 "no se pudo crear el trabajo: $respuesta1"
+  [ -n "$proveedor1_preparado" ] && criterio CASO-1a 1 "no se pudo crear el trabajo: ${respuesta1:-}"
 else
   estado1="$(esperar_estado_final "$t1")"
   proveedor1="$(campo_trabajo "$t1" proveedor_id)"
   criterio CASO-1a "$([ "$estado1" = ASIGNADO ] && echo 0 || echo 1)" \
-    "GET /trabajos/$t1 -> estado=$estado1 (esperado ASIGNADO; si no hay proveedores ACREDITADA vigentes cargados, este caso falla — ver Prerrequisitos de quickstart.md)"
+    "GET /trabajos/$t1 -> estado=$estado1 (esperado ASIGNADO)"
   criterio CASO-1b "$([ -n "$proveedor1" ] && echo 0 || echo 1)" \
     "GET /trabajos/$t1 -> proveedor_id=$proveedor1 (esperado no vacío)"
 
@@ -139,10 +184,17 @@ fi
 resultado ""
 resultado "## Caso 2 — simular_fallo=VIGENCIA"
 
-respuesta2="$(crear_trabajo VIGENCIA)"
-t2="$(echo "$respuesta2" | trabajo_id_de)"
+proveedor2_preparado="$(preparar_proveedor caso2)"
+if [ -z "$proveedor2_preparado" ]; then
+  criterio CASO-2a 1 "no se pudo dejar listo un proveedor ACREDITADA/vigente para $CATEGORIA/CO/Bogota en ${ESPERA_MAX_S}s"
+  t2=""
+else
+  resultado "  (preparación) proveedor $proveedor2_preparado ACREDITADA y visible en /candidatos"
+  respuesta2="$(crear_trabajo VIGENCIA)"
+  t2="$(echo "$respuesta2" | trabajo_id_de)"
+fi
 if [ -z "$t2" ]; then
-  criterio CASO-2a 1 "no se pudo crear el trabajo: $respuesta2"
+  [ -n "$proveedor2_preparado" ] && criterio CASO-2a 1 "no se pudo crear el trabajo: ${respuesta2:-}"
 else
   estado2="$(esperar_estado_final "$t2")"
   proveedor2="$(campo_trabajo "$t2" proveedor_id)"
@@ -159,7 +211,7 @@ else
   # explícita de vigencia-rechazada o candidatos-liberados.
   compensacion2="$(pasos_de "$t2" | grep -cE 'vigencia-rechazada|candidatos-liberados' || true)"
   criterio CASO-2c "$([ "${compensacion2:-0}" -ge 1 ] && echo 0 || echo 1)" \
-    "GET /sagas/$t2 -> ${compensacion2:-0} paso(s) de vigencia-rechazada/candidatos-liberados (esperado >= 1; si es 0 seguramente no había un proveedor ACREDITADA vigente disponible para reservar)"
+    "GET /sagas/$t2 -> ${compensacion2:-0} paso(s) de vigencia-rechazada/candidatos-liberados (esperado >= 1)"
 fi
 
 # ------------------------------------------------------------- Caso 3 (CA-1.4)
@@ -194,10 +246,17 @@ fi
 resultado ""
 resultado "## Caso 4 — simular_fallo=ASIGNACION"
 
-respuesta4="$(crear_trabajo ASIGNACION)"
-t4="$(echo "$respuesta4" | trabajo_id_de)"
+proveedor4_preparado="$(preparar_proveedor caso4)"
+if [ -z "$proveedor4_preparado" ]; then
+  criterio CASO-4a 1 "no se pudo dejar listo un proveedor ACREDITADA/vigente para $CATEGORIA/CO/Bogota en ${ESPERA_MAX_S}s"
+  t4=""
+else
+  resultado "  (preparación) proveedor $proveedor4_preparado ACREDITADA y visible en /candidatos"
+  respuesta4="$(crear_trabajo ASIGNACION)"
+  t4="$(echo "$respuesta4" | trabajo_id_de)"
+fi
 if [ -z "$t4" ]; then
-  criterio CASO-4a 1 "no se pudo crear el trabajo: $respuesta4"
+  [ -n "$proveedor4_preparado" ] && criterio CASO-4a 1 "no se pudo crear el trabajo: ${respuesta4:-}"
 else
   estado4="$(esperar_estado_final "$t4")"
   criterio CASO-4a "$([ "$estado4" = CANCELADO ] && echo 0 || echo 1)" \
