@@ -205,6 +205,59 @@
           ]
         },
         {
+          "name": "POST /trabajos — BR/PLOMERIA (región sin consumidor activo, para PUT /estado manual)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bffUrl}}/trabajos",
+              "host": [
+                "{{bffUrl}}"
+              ],
+              "path": [
+                "trabajos"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoria\": \"PLOMERIA\",\n  \"pais\": \"BR\",\n  \"ciudad\": \"Sao Paulo\",\n  \"direccion\": \"Rua Augusta 100\",\n  \"urgencia\": \"NORMAL\",\n  \"descripcion\": \"trabajo dedicado a probar PUT /estado manual, sin competir con la saga\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// US-01 (Entrega 5): la saga mueve CREADO→EMPAREJANDO en la creación",
+                  "// misma, y de ahí en adelante compite por avanzar el trabajo tan pronto",
+                  "// como Emparejamiento regional lo procese. 'BR'/'AR' mapean a la región",
+                  "// conosur, cuyo consumidor (emparejamiento-conosur) NO arranca por",
+                  "// defecto (docker-compose.yml, perfil conosur) — así que este trabajo se",
+                  "// queda en EMPAREJANDO indefinidamente, sin que nada compita por él, y la",
+                  "// prueba de PUT /estado más abajo deja de ser una carrera contra la saga.",
+                  "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
+                  "const cuerpo = pm.response.json();",
+                  "pm.test('el cuerpo trae el id', () => {",
+                  "    pm.expect(cuerpo.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);",
+                  "});",
+                  "pm.collectionVariables.set('trabajoIdManual', cuerpo.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "PUT /trabajos/{id}/estado — EMPAREJANDO → ASIGNADO (202)",
           "request": {
             "method": "PUT",
@@ -215,13 +268,13 @@
               }
             ],
             "url": {
-              "raw": "{{bffUrl}}/trabajos/{{trabajoId}}/estado",
+              "raw": "{{bffUrl}}/trabajos/{{trabajoIdManual}}/estado",
               "host": [
                 "{{bffUrl}}"
               ],
               "path": [
                 "trabajos",
-                "{{trabajoId}}",
+                "{{trabajoIdManual}}",
                 "estado"
               ]
             },
@@ -1985,6 +2038,10 @@
     },
     {
       "key": "correlationId",
+      "value": ""
+    },
+    {
+      "key": "trabajoIdManual",
       "value": ""
     }
   ]
