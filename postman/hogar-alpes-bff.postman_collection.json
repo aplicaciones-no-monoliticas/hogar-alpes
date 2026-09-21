@@ -205,7 +205,7 @@
           ]
         },
         {
-          "name": "PUT /trabajos/{id}/estado — CREADO → EMPAREJANDO (202)",
+          "name": "PUT /trabajos/{id}/estado — EMPAREJANDO → ASIGNADO (202)",
           "request": {
             "method": "PUT",
             "header": [
@@ -227,7 +227,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"estado\": \"EMPAREJANDO\"\n}",
+              "raw": "{\n  \"estado\": \"ASIGNADO\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -241,9 +241,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "// US-01 (Entrega 5): CrearTrabajoHandler ya deja el trabajo en EMPAREJANDO",
+                  "// en el mismo commit de la creación (CA-1.2), así que CREADO→EMPAREJANDO",
+                  "// manual ya no es una transición válida (409). Se prueba la siguiente",
+                  "// transición manual del ciclo de vida en su lugar.",
                   "pm.test('202 Accepted', () => pm.expect(pm.response.code).to.eql(202));",
-                  "pm.test('el trabajo pasó a EMPAREJANDO', () => {",
-                  "    pm.expect(pm.response.json().estado).to.eql('EMPAREJANDO');",
+                  "pm.test('el trabajo pasó a ASIGNADO', () => {",
+                  "    pm.expect(pm.response.json().estado).to.eql('ASIGNADO');",
                   "});"
                 ]
               }
