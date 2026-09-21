@@ -206,3 +206,5 @@ dice si cada métrica se cumplió o no.
 Al terminar, cada script deja un archivo en `docs/resultados/` con el
 resultado de cada métrica marcado como **PASA** o **FALLA**, listo para
 revisar sin tener que repetir la prueba.
+
+<!-- test commit -->
