@@ -25,6 +25,7 @@ def _registrar_handlers():
     registrados antes de atender la primera petición."""
     import acreditacion.modulos.acreditacion.aplicacion.handlers  # noqa: F401
     import acreditacion.modulos.acreditacion.aplicacion.comandos.aprobar_acreditacion  # noqa: F401
+    import acreditacion.modulos.acreditacion.aplicacion.comandos.confirmar_vigencia  # noqa: F401
     import acreditacion.modulos.acreditacion.aplicacion.comandos.revocar_acreditacion  # noqa: F401
     import acreditacion.modulos.acreditacion.aplicacion.comandos.solicitar_acreditacion  # noqa: F401
     import acreditacion.modulos.acreditacion.aplicacion.queries.obtener_acreditacion  # noqa: F401

@@ -239,7 +239,7 @@ def test_el_evento_de_trabajo_deja_el_trabajo_id_en_el_registro(monkeypatch, cap
 
     def caso():
         with correlacion.contexto('cid-literal-1'):
-            consumidores_modulo.manejar_evento_trabajo(valor, None)
+            consumidores_modulo.manejar_evento_trabajo(valor, _Mensaje(valor))
 
     contextvars.copy_context().run(caso)
 

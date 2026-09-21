@@ -11,6 +11,9 @@ from pulsar.schema import Array, Long, Record, String
 
 TIPO_CANDIDATOS = 'hogaralpes.emparejamiento.candidatos-identificados.v1'
 TIPO_SIN_CANDIDATOS = 'hogaralpes.emparejamiento.sin-candidatos.v1'
+# Saga (Entrega 5, ver specs/002-saga-asignacion-trabajo/research.md D1/D2).
+TIPO_PROVEEDOR_PROPUESTO = 'hogaralpes.emparejamiento.proveedor-propuesto.v1'
+TIPO_CANDIDATOS_LIBERADOS = 'hogaralpes.emparejamiento.candidatos-liberados.v1'
 
 
 class EventoEmparejamiento(Record):
@@ -31,3 +34,6 @@ class EventoEmparejamiento(Record):
     ciudad = String(default=None, required_default=True)
     total_candidatos = Long(default=None, required_default=True)
     candidatos = Array(String(), default=None, required_default=True)
+    # --- saga (Entrega 5) ---
+    proveedor_id = String(default='', required_default=True)
+    motivo = String(default='', required_default=True)

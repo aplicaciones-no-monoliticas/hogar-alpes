@@ -50,8 +50,12 @@ class Trabajo(AgregacionRaiz, ValidarReglasMixin):
     descripcion: str = ''
     estado: EstadoTrabajo = field(default_factory=EstadoTrabajo)
     sub_trabajos: list[SubTrabajo] = field(default_factory=list)
+    # Nuevo (D5, saga Entrega 5): `None` hasta que la saga completa; se fija
+    # junto con la transición a `ASIGNADO`.
+    proveedor_id: str | None = None
 
-    def crear(self, categorias_permitidas: list[str], urgencias_permitidas: list[str]):
+    def crear(self, categorias_permitidas: list[str], urgencias_permitidas: list[str],
+              simular_fallo: str = ''):
         """Las listas permitidas llegan del sidecar regional a través del handler.
         El dominio valida contra ellas sin saber de qué país vinieron."""
         self.validar_regla(UbicacionCompleta(self.ubicacion))
@@ -69,10 +73,11 @@ class Trabajo(AgregacionRaiz, ValidarReglasMixin):
                 canal=self.solicitante.canal.value,
                 partner_id=self.solicitante.partner_id,
                 estado=self.estado.valor.value,
+                simular_fallo=simular_fallo,
             )
         )
 
-    def cambiar_estado(self, destino: Estado):
+    def cambiar_estado(self, destino: Estado, simular_fallo: str = ''):
         self.validar_regla(TransicionDeEstadoValida(self.estado, destino))
         anterior = self.estado.valor
         self.estado = EstadoTrabajo(destino)
@@ -87,6 +92,7 @@ class Trabajo(AgregacionRaiz, ValidarReglasMixin):
                 partner_id=self.solicitante.partner_id,
                 categoria=self.categoria.codigo,
                 urgencia=self.urgencia.nivel,
+                simular_fallo=simular_fallo,
             )
         )
 

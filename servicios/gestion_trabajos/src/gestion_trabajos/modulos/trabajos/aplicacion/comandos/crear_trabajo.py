@@ -24,6 +24,7 @@ from gestion_trabajos.seedwork.aplicacion.comandos import Comando, ejecutar_coma
 from gestion_trabajos.seedwork.infraestructura.uow import UnidadTrabajoPuerto
 
 from ...dominio.entidades import Trabajo
+from ...dominio.objetos_valor import Estado
 from ...dominio.repositorios import RepositorioTrabajos
 from ...infraestructura.reglas_regionales import SidecarReglasRegionales
 from ..dto import TrabajoDTO
@@ -43,6 +44,9 @@ class CrearTrabajo(Comando):
     ciudad: str = ''
     direccion: str = ''
     descripcion: str = ''
+    # Marca de demostración de la saga (Entrega 5, D3 de research.md): nunca
+    # forma parte de ningún contrato, solo viaja como propiedad del mensaje.
+    simular_fallo: str = ''
 
 
 class CrearTrabajoHandler(TrabajoBaseHandler):
@@ -78,7 +82,12 @@ class CrearTrabajoHandler(TrabajoBaseHandler):
         trabajo.crear(
             categorias_permitidas=sidecar.categorias_permitidas(comando.pais),
             urgencias_permitidas=sidecar.urgencias_permitidas(comando.pais),
+            simular_fallo=comando.simular_fallo,
         )
+        # Saga (D2 de research.md): la transición CREADO→EMPAREJANDO la dispara
+        # el propio handler, en el mismo commit, para que `evt-trabajo` porte el
+        # estado correcto desde el primer momento en que Emparejamiento lo lee.
+        trabajo.cambiar_estado(Estado.EMPAREJANDO, simular_fallo=comando.simular_fallo)
 
         repositorio = self.fabrica_repositorio.crear_objeto(RepositorioTrabajos)
 

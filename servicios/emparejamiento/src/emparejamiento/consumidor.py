@@ -96,8 +96,10 @@ def main():
     - `regional`   — solo `evt-trabajo-{región}`. Es la que escala el
       escenario 8 (`docker compose --scale`) sin arrastrar réplicas ociosas de
       la proyección.
-    - `proyeccion` — solo `evt-acreditacion`.
-    - `todos` (por defecto) — las dos, en hilos separados. Cómodo para
+    - `proyeccion` — solo `evt-acreditacion` (suscripción `emparejamiento-proyeccion`).
+    - `saga`       — solo `evt-acreditacion` (suscripción `emparejamiento-saga`,
+      Entrega 5): libera la reserva cuando Acreditación rechaza la vigencia.
+    - `todos` (por defecto) — las tres, en hilos separados. Cómodo para
       desarrollo y para una demo de un solo contenedor por región.
     """
     correlacion.instalar_registro()
@@ -111,6 +113,7 @@ def main():
     from .modulos.emparejamiento.infraestructura.consumidores import (
         suscribirse_proyeccion,
         suscribirse_regional,
+        suscribirse_saga,
     )
 
     app = crear_app()
@@ -121,6 +124,8 @@ def main():
         hilos.append(threading.Thread(target=suscribirse_regional, args=(app,), daemon=True))
     if rol in ('proyeccion', 'todos'):
         hilos.append(threading.Thread(target=suscribirse_proyeccion, args=(app,), daemon=True))
+    if rol in ('saga', 'todos'):
+        hilos.append(threading.Thread(target=suscribirse_saga, args=(app,), daemon=True))
     if not hilos:
         raise SystemExit(f'ROL_CONSUMIDOR desconocido: {rol!r}')
 

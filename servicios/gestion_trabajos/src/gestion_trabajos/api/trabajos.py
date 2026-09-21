@@ -48,6 +48,7 @@ def crear_trabajo():
             ciudad=cuerpo.get('ciudad', ''),
             direccion=cuerpo.get('direccion', ''),
             descripcion=cuerpo.get('descripcion', ''),
+            simular_fallo=cuerpo.get('simular_fallo', ''),
         )
         trabajo_id = ejecutar_comando(comando)
         return jsonify({'id': trabajo_id, 'estado': 'CREADO'}), 202

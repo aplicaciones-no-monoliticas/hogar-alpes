@@ -1,8 +1,16 @@
 """ADAPTADORES CRUD sobre PostgreSQL, uno por puerto de dominio."""
+from datetime import datetime
+
+from sqlalchemy.exc import IntegrityError
+
 from emparejamiento.config.db import db
 
 from ..dominio.entidades import Emparejamiento
-from ..dominio.repositorios import RepositorioEmparejamientos, RepositorioProveedoresCandidatos
+from ..dominio.repositorios import (
+    RepositorioEmparejamientos,
+    RepositorioProveedoresCandidatos,
+    RepositorioReservasProveedor,
+)
 from . import dto as modelo
 from .mapeadores import MapeadorEmparejamiento
 
@@ -21,6 +29,9 @@ class RepositorioEmparejamientosPostgres(RepositorioEmparejamientos):
 
     def agregar(self, emparejamiento: Emparejamiento):
         db.session.add(self._mapeador.entidad_a_dto(emparejamiento))
+
+    def actualizar(self, emparejamiento: Emparejamiento):
+        db.session.merge(self._mapeador.entidad_a_dto(emparejamiento))
 
 
 class RepositorioProveedoresCandidatosPostgres(RepositorioProveedoresCandidatos):
@@ -63,3 +74,26 @@ class RepositorioProveedoresCandidatosPostgres(RepositorioProveedoresCandidatos)
         registro.estado = estado
         registro.vigente_hasta = vigente_hasta
         registro.version = version
+
+
+class RepositorioReservasProveedorPostgres(RepositorioReservasProveedor):
+    def reservar(self, proveedor_id: str, trabajo_id: str, categoria: str) -> bool:
+        db.session.add(modelo.ReservaProveedor(
+            proveedor_id=proveedor_id, trabajo_id=trabajo_id, categoria=categoria,
+            reservado_en=datetime.utcnow(),
+        ))
+        try:
+            # `flush()`, no `commit()`: fuerza el INSERT de inmediato para que
+            # el conflicto de unicidad se detecte aquí, dentro del mismo
+            # intento, y no en un commit posterior (mismo patrón que
+            # Acreditación · D1 de research.md).
+            db.session.flush()
+            return True
+        except IntegrityError:
+            db.session.rollback()
+            return False
+
+    def liberar_por_trabajo(self, trabajo_id: str):
+        # DELETE de una fila que ya no existe (reentrega) es un no-op —
+        # idempotente por construcción (FR-016).
+        db.session.query(modelo.ReservaProveedor).filter_by(trabajo_id=trabajo_id).delete()

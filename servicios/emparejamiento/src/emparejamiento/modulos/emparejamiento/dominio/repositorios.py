@@ -22,6 +22,10 @@ class RepositorioEmparejamientos(ABC):
     def agregar(self, emparejamiento: Emparejamiento):
         ...
 
+    @abstractmethod
+    def actualizar(self, emparejamiento: Emparejamiento):
+        ...
+
 
 class RepositorioProveedoresCandidatos(ABC):
     @abstractmethod
@@ -36,4 +40,22 @@ class RepositorioProveedoresCandidatos(ABC):
                nivel: str, estado: str, vigente_hasta: str, version: int):
         """Idempotente y tolerante al desorden: se aplica solo si `version` es
         mayor que la almacenada (§5.3 de la especificación)."""
+        ...
+
+
+class RepositorioReservasProveedor(ABC):
+    """Saga (Entrega 5, D1 de research.md): la restricción de unicidad sobre
+    `proveedor_id` es lo que resuelve R5-2 — dos trabajos que compiten por el
+    mismo proveedor casi al tiempo, el segundo `INSERT` falla."""
+
+    @abstractmethod
+    def reservar(self, proveedor_id: str, trabajo_id: str, categoria: str) -> bool:
+        """`True` si la reserva quedó hecha; `False` si el proveedor ya estaba
+        reservado por otro trabajo (conflicto de unicidad, no una excepción)."""
+        ...
+
+    @abstractmethod
+    def liberar_por_trabajo(self, trabajo_id: str):
+        """No-op si no existe ninguna reserva para ese trabajo — idempotente
+        ante reentrega (FR-016)."""
         ...

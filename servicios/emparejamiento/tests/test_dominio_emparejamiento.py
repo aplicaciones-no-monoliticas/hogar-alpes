@@ -6,6 +6,8 @@ import pytest
 from emparejamiento.modulos.emparejamiento.dominio.entidades import Emparejamiento
 from emparejamiento.modulos.emparejamiento.dominio.eventos import (
     CandidatosIdentificados,
+    CandidatosLiberados,
+    ProveedorPropuesto,
     SinCandidatos,
 )
 from emparejamiento.modulos.emparejamiento.dominio.objetos_valor import (
@@ -51,3 +53,48 @@ def test_criterio_incompleto_rompe_la_regla():
 
     with pytest.raises(ReglaNegocioExcepcion):
         emparejamiento.emparejar(criterio, [])
+
+
+# ---------------------------------------------------------------- saga (T016)
+
+def test_proponer_proveedor_reservado_emite_proveedor_propuesto():
+    emparejamiento = _emparejamiento()
+    criterio = CriterioBusqueda(categoria='PLOMERIA', pais='CO', ciudad='Bogota')
+    candidatos = [Candidato(proveedor_id='p1', nivel='ORO'), Candidato(proveedor_id='p2', nivel='PLATA')]
+    emparejamiento.emparejar(criterio, candidatos)
+
+    emparejamiento.proponer_proveedor('p1')
+
+    assert emparejamiento.proveedor_reservado == 'p1'
+    evento = emparejamiento.eventos[-1]
+    assert isinstance(evento, ProveedorPropuesto)
+    assert evento.proveedor_id == 'p1'
+    assert evento.candidatos == ['p1', 'p2']
+
+
+def test_agotar_candidatos_equivale_a_sin_candidatos():
+    """D1 de research.md: la lista completa se probó y ninguno pudo
+    reservarse — equivalente a sin candidatos para la saga."""
+    emparejamiento = _emparejamiento()
+    criterio = CriterioBusqueda(categoria='PLOMERIA', pais='CO', ciudad='Bogota')
+    emparejamiento.emparejar(criterio, [Candidato(proveedor_id='p1', nivel='ORO')])
+
+    emparejamiento.agotar_candidatos()
+
+    assert emparejamiento.proveedor_reservado is None
+    assert isinstance(emparejamiento.eventos[-1], SinCandidatos)
+
+
+def test_liberar_reserva_limpia_el_proveedor_y_emite_candidatos_liberados():
+    emparejamiento = _emparejamiento()
+    criterio = CriterioBusqueda(categoria='PLOMERIA', pais='CO', ciudad='Bogota')
+    emparejamiento.emparejar(criterio, [Candidato(proveedor_id='p1', nivel='ORO')])
+    emparejamiento.proponer_proveedor('p1')
+
+    emparejamiento.liberar_reserva('VIGENCIA_RECHAZADA')
+
+    assert emparejamiento.proveedor_reservado is None
+    evento = emparejamiento.eventos[-1]
+    assert isinstance(evento, CandidatosLiberados)
+    assert evento.proveedor_id == 'p1'
+    assert evento.motivo == 'VIGENCIA_RECHAZADA'

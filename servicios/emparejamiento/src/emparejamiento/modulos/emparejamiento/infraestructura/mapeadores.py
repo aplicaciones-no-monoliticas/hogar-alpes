@@ -13,6 +13,8 @@ from ..dominio.entidades import Emparejamiento
 from ..dominio.objetos_valor import Candidato, CriterioBusqueda
 from .schema.v1.evt_emparejamiento import (
     TIPO_CANDIDATOS,
+    TIPO_CANDIDATOS_LIBERADOS,
+    TIPO_PROVEEDOR_PROPUESTO,
     TIPO_SIN_CANDIDATOS,
     EventoEmparejamiento,
 )
@@ -29,6 +31,7 @@ class MapeadorEmparejamiento:
             ciudad=entidad.criterio.ciudad,
             candidatos=[c.proveedor_id for c in entidad.candidatos],
             total=len(entidad.candidatos),
+            proveedor_reservado=entidad.proveedor_reservado,
         )
 
     def dto_a_entidad(self, dto: modelo.Emparejamiento) -> Emparejamiento:
@@ -36,6 +39,7 @@ class MapeadorEmparejamiento:
         entidad = Emparejamiento(id=trabajo_id, trabajo_id=trabajo_id, region=dto.region)
         entidad.criterio = CriterioBusqueda(categoria=dto.categoria, pais=dto.pais, ciudad=dto.ciudad)
         entidad.candidatos = [Candidato(proveedor_id=p, nivel='') for p in dto.candidatos]
+        entidad.proveedor_reservado = dto.proveedor_reservado
         return entidad
 
 
@@ -69,6 +73,35 @@ class MapeadorEmparejamientoIntegracion:
                 ciudad=evento.ciudad,
                 total_candidatos=0,
                 candidatos=[],
+            )
+            return mensaje, EventoEmparejamiento
+
+        if nombre == 'ProveedorPropuesto':
+            mensaje = EventoEmparejamiento(
+                **sobre(TIPO_PROVEEDOR_PROPUESTO, 'emparejamiento', correlation_id=correlacion.actual()),
+                trabajo_id=str(evento.trabajo_id),
+                region=evento.region,
+                categoria=evento.categoria,
+                pais=evento.pais,
+                ciudad=evento.ciudad,
+                total_candidatos=len(evento.candidatos),
+                candidatos=list(evento.candidatos),
+                proveedor_id=evento.proveedor_id,
+            )
+            return mensaje, EventoEmparejamiento
+
+        if nombre == 'CandidatosLiberados':
+            mensaje = EventoEmparejamiento(
+                **sobre(TIPO_CANDIDATOS_LIBERADOS, 'emparejamiento', correlation_id=correlacion.actual()),
+                trabajo_id=str(evento.trabajo_id),
+                region=evento.region,
+                categoria='',
+                pais='',
+                ciudad='',
+                total_candidatos=0,
+                candidatos=[],
+                proveedor_id=evento.proveedor_id,
+                motivo=evento.motivo,
             )
             return mensaje, EventoEmparejamiento
 

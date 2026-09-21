@@ -118,3 +118,45 @@ def test_historial_devuelve_los_eventos_en_orden(app):
         'AcreditacionSolicitada', 'AcreditacionAprobada', 'AcreditacionRevocada',
     ]
     assert [h['version'] for h in historial] == [1, 2, 3]
+
+
+# --------------------------------------------- saga (Entrega 5, D4/T017/T027)
+
+def test_agregar_actualiza_vigencia_por_proveedor_en_la_misma_transaccion(app):
+    from acreditacion.config.db import db
+    from acreditacion.modulos.acreditacion.infraestructura.repositorios import (
+        RepositorioVigenciaPorProveedorPostgres,
+    )
+
+    repo = RepositorioAcreditacionesEventSourcing()
+    acreditacion = _nueva(repo)  # SOLICITADA, version=1
+    repo_vigencia = RepositorioVigenciaPorProveedorPostgres()
+
+    for categoria in ('PLOMERIA', 'GAS'):
+        vigencia = repo_vigencia.consultar('prov-1', categoria)
+        assert vigencia == {'estado': 'SOLICITADA', 'vigente_hasta': '', 'version': 1}
+
+    acreditacion = repo.obtener_por_id(acreditacion.id)
+    acreditacion.aprobar()
+    repo.agregar(acreditacion)
+    db.session.commit()
+
+    vigencia = repo_vigencia.consultar('prov-1', 'PLOMERIA')
+    assert vigencia['estado'] == 'ACREDITADA'
+    assert vigencia['version'] == 2
+
+
+def test_vigencia_por_proveedor_es_tolerante_al_desorden(app):
+    """D4: un evento viejo llegado tarde (version menor) no pisa uno más
+    nuevo que ya se aplicó."""
+    from acreditacion.modulos.acreditacion.infraestructura.repositorios import (
+        RepositorioVigenciaPorProveedorPostgres,
+    )
+
+    repo = RepositorioVigenciaPorProveedorPostgres()
+    repo.upsert('prov-2', 'PLOMERIA', estado='ACREDITADA', vigente_hasta='2027-01-01', version=5)
+
+    repo.upsert('prov-2', 'PLOMERIA', estado='REVOCADA', vigente_hasta='2027-01-01', version=3)
+
+    vigencia = repo.consultar('prov-2', 'PLOMERIA')
+    assert vigencia == {'estado': 'ACREDITADA', 'vigente_hasta': '2027-01-01', 'version': 5}

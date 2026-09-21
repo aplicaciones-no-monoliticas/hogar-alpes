@@ -74,6 +74,13 @@ for region in $REGIONES_INICIALES; do
   # Misma definición que usa `agregar-region.sh`: una región creada en caliente
   # es indistinguible de una creada aquí.
   crear_region "$region"
+  # Saga (Entrega 5, T045/D6): `saga-log` cubre todas las regiones con un
+  # patrón (`evt-trabajo-.*`), como ya hace GT con `cmd-trabajo-.*`. Se
+  # pre-crea aquí, fuera de `crear_region`, para no acoplar un servicio nuevo
+  # a la única definición que usa también el alta en caliente (D6 explícito:
+  # no hace falta tocar `crear_region`; una región agregada en caliente
+  # después de esta entrega queda sin esta suscripción puntual).
+  crear_suscripcion "persistent://$TENANT/$NS_TRABAJOS/evt-trabajo-$region" "saga-log"
 done
 
 echo
@@ -84,12 +91,22 @@ crear_topico "$cmd_acr"
 crear_topico "$evt_acr"
 crear_suscripcion "$cmd_acr" "acreditacion"
 crear_suscripcion "$evt_acr" "emparejamiento-proyeccion"
+# Saga (Entrega 5, D6 de specs/002-saga-asignacion-trabajo/research.md): GT
+# escucha vigencia-confirmada/rechazada, Emparejamiento escucha vigencia-rechazada
+# para liberar su reserva.
+crear_suscripcion "$evt_acr" "gestion-trabajos-saga"
+crear_suscripcion "$evt_acr" "emparejamiento-saga"
+crear_suscripcion "$evt_acr" "saga-log"
 
 echo
 echo "emparejamiento"
-# Nadie lo consume en la Entrega 4: lo escuchará la saga de la Entrega 5. Por eso
-# se crea el tópico pero no una suscripción que nadie atendería.
-crear_topico "persistent://$TENANT/$NS_EMPAREJAMIENTO/evt-emparejamiento"
+evt_emp="persistent://$TENANT/$NS_EMPAREJAMIENTO/evt-emparejamiento"
+crear_topico "$evt_emp"
+# Saga (Entrega 5, D6): Acreditación escucha proveedor-propuesto para confirmar
+# vigencia; GT escucha sin-candidatos para compensar.
+crear_suscripcion "$evt_emp" "acreditacion"
+crear_suscripcion "$evt_emp" "gestion-trabajos-saga"
+crear_suscripcion "$evt_emp" "saga-log"
 
 # La cuota de backlog es la política de la que depende el escenario 6, y su
 # comando puede fallar por el acoplamiento con la retención. No basta con que

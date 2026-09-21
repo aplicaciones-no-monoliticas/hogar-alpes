@@ -20,6 +20,10 @@ class TrabajoCreado(EventoDominio):
     canal: str = ''
     partner_id: str = ''
     estado: str = ''
+    # Marca de demostración de la saga (Entrega 5, D3 de
+    # specs/002-saga-asignacion-trabajo/research.md): nunca forma parte del
+    # contrato Avro, viaja solo como propiedad del mensaje.
+    simular_fallo: str = ''
 
 
 @dataclass
@@ -37,6 +41,7 @@ class EstadoTrabajoCambiado(EventoDominio):
     partner_id: str = ''
     categoria: str = ''
     urgencia: str = ''
+    simular_fallo: str = ''
 
 
 @dataclass

@@ -88,3 +88,60 @@ def test_sub_trabajo_vive_dentro_del_agregado():
     )
     assert len(trabajo.sub_trabajos) == 1
     assert trabajo.eventos[-1].trabajo_id == trabajo.id
+
+
+# ------------------------------------------------------- saga (Entrega 5, T015/T033)
+
+def test_proveedor_id_es_none_hasta_que_se_asigna():
+    trabajo = _trabajo()
+    assert trabajo.proveedor_id is None
+
+
+def test_creado_a_emparejando_es_una_transicion_valida():
+    """D2 de research.md: la transición ya está declarada en TRANSICIONES; la
+    saga solo necesitaba quien la disparara."""
+    trabajo = _trabajo()
+    trabajo.crear(CATEGORIAS, URGENCIAS)
+    trabajo.cambiar_estado(Estado.EMPAREJANDO)
+
+    assert trabajo.estado.valor == Estado.EMPAREJANDO
+    assert trabajo.eventos[-1].estado_nuevo == 'EMPAREJANDO'
+
+
+def test_asignar_proveedor_id_junto_con_la_transicion_a_asignado():
+    trabajo = _trabajo()
+    trabajo.crear(CATEGORIAS, URGENCIAS)
+    trabajo.cambiar_estado(Estado.EMPAREJANDO)
+
+    trabajo.proveedor_id = 'proveedor-1'
+    trabajo.cambiar_estado(Estado.ASIGNADO)
+
+    assert trabajo.estado.valor == Estado.ASIGNADO
+    assert trabajo.proveedor_id == 'proveedor-1'
+
+
+@pytest.mark.parametrize('motivo', ['sin_candidatos', 'vigencia_rechazada', 'asignacion_fallida'])
+def test_emparejando_a_cancelado_es_valida_para_los_tres_motivos_de_falla(motivo):
+    """US2, T033: los tres puntos de falla de la saga (`SIN_CANDIDATOS`,
+    `VIGENCIA`, `ASIGNACION`) terminan en la misma transición de dominio —
+    solo cambia quién la dispara, no la regla."""
+    trabajo = _trabajo()
+    trabajo.crear(CATEGORIAS, URGENCIAS)
+    trabajo.cambiar_estado(Estado.EMPAREJANDO)
+
+    trabajo.cambiar_estado(Estado.CANCELADO)
+
+    assert trabajo.estado.valor == Estado.CANCELADO
+    assert trabajo.proveedor_id is None
+    assert (trabajo.eventos[-1].estado_anterior, trabajo.eventos[-1].estado_nuevo) == (
+        'EMPAREJANDO', 'CANCELADO',
+    )
+
+
+def test_simular_fallo_viaja_en_el_evento_sin_tocar_el_contrato():
+    """D3 de research.md: la marca de simulación es un dato del evento de
+    dominio, nunca un campo del esquema Avro (eso lo decide el mapeador)."""
+    trabajo = _trabajo()
+    trabajo.crear(CATEGORIAS, URGENCIAS, simular_fallo='SIN_CANDIDATOS')
+
+    assert trabajo.eventos[0].simular_fallo == 'SIN_CANDIDATOS'

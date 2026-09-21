@@ -10,7 +10,12 @@ from acreditacion.seedwork.infraestructura.schema.v1.mensajes import sobre
 
 from ..dominio.entidades import Acreditacion
 from ..dominio.eventos import TIPOS_EVENTO
-from .schema.v1.eventos import TIPO_ACTUALIZADA, AcreditacionActualizada
+from .schema.v1.eventos import (
+    TIPO_ACTUALIZADA,
+    TIPO_VIGENCIA_CONFIRMADA,
+    TIPO_VIGENCIA_RECHAZADA,
+    AcreditacionActualizada,
+)
 
 CAMPOS_EVENTO = (
     'proveedor_id', 'pais', 'ciudad', 'categorias', 'nivel', 'vigencia_meses',
@@ -48,6 +53,32 @@ class MapeadorAcreditacionIntegracion:
             estado=evento.estado,
             vigente_hasta=evento.vigente_hasta,
             version=evento.version,
+        )
+        return mensaje, AcreditacionActualizada
+
+
+class MapeadorVigenciaIntegracion:
+    """Saga (Entrega 5, D2/D8): a diferencia de `MapeadorAcreditacionIntegracion`,
+    no traduce un evento de dominio del agregado —no hay mutación del event
+    store en este paso—, sino el resultado (`DecisionVigencia`) de haber
+    consultado la proyección `vigencia_por_proveedor`. Misma interfaz que
+    consume el `Despachador`: `entidad_a_dto(evento)` -> `(mensaje, schema)`."""
+
+    def entidad_a_dto(self, decision):
+        tipo = TIPO_VIGENCIA_CONFIRMADA if decision.confirmada else TIPO_VIGENCIA_RECHAZADA
+        mensaje = AcreditacionActualizada(
+            **sobre(tipo, 'acreditacion', correlation_id=correlacion.actual()),
+            acreditacion_id='',
+            proveedor_id=decision.proveedor_id,
+            pais='',
+            ciudad='',
+            categorias=[],
+            nivel='',
+            estado='',
+            vigente_hasta='',
+            version=0,
+            trabajo_id=decision.trabajo_id,
+            categoria=decision.categoria,
         )
         return mensaje, AcreditacionActualizada
 

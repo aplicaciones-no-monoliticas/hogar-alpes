@@ -23,6 +23,9 @@ acreditaciones es bajo comparado con el de trabajos.
 from pulsar.schema import Array, Long, Record, String
 
 TIPO_ACTUALIZADA = 'hogaralpes.acreditacion.actualizada.v1'
+# Saga (Entrega 5, ver specs/002-saga-asignacion-trabajo/research.md D2/D8).
+TIPO_VIGENCIA_CONFIRMADA = 'hogaralpes.acreditacion.vigencia-confirmada.v1'
+TIPO_VIGENCIA_RECHAZADA = 'hogaralpes.acreditacion.vigencia-rechazada.v1'
 
 
 class AcreditacionActualizada(Record):
@@ -48,3 +51,6 @@ class AcreditacionActualizada(Record):
     # Versión del agregado en el event store: es lo que hace idempotente al
     # consumidor. Una versión menor o igual a la almacenada se ignora.
     version = Long(default=None, required_default=True)
+    # --- saga (Entrega 5) ---
+    trabajo_id = String(default='', required_default=True)
+    categoria = String(default='', required_default=True)

@@ -14,6 +14,8 @@ NS_ACREDITACION = os.getenv('PULSAR_NS_ACREDITACION', 'acreditacion')
 NS_EMPAREJAMIENTO = os.getenv('PULSAR_NS_EMPAREJAMIENTO', 'emparejamiento')
 
 SUSCRIPCION_PROYECCION = 'emparejamiento-proyeccion'
+# Saga (Entrega 5, D6 de specs/002-saga-asignacion-trabajo/research.md).
+SUSCRIPCION_SAGA = 'emparejamiento-saga'
 
 
 def region() -> str:

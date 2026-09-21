@@ -40,6 +40,7 @@ class MapeadorTrabajo(Mapeador):
             direccion=entidad.ubicacion.direccion,
             descripcion=entidad.descripcion,
             estado=entidad.estado.valor.value,
+            proveedor_id=entidad.proveedor_id,
             sub_trabajos=[
                 modelo.SubTrabajo(
                     id=str(s.id),
@@ -67,6 +68,7 @@ class MapeadorTrabajo(Mapeador):
             ubicacion=Ubicacion(pais=dto.pais, ciudad=dto.ciudad, direccion=dto.direccion),
             descripcion=dto.descripcion or '',
             estado=EstadoTrabajo(Estado(dto.estado)),
+            proveedor_id=dto.proveedor_id,
         )
         trabajo.sub_trabajos = [
             SubTrabajo(

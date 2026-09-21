@@ -33,6 +33,9 @@ def registrar_handlers():
 def registrar_comandos_y_queries():
     """Fuerza el registro en los `singledispatch` de comandos y consultas."""
     import gestion_trabajos.modulos.trabajos.aplicacion.comandos.cambiar_estado_trabajo  # noqa: F401
+    import gestion_trabajos.modulos.trabajos.aplicacion.comandos.cancelar_sin_candidatos  # noqa: F401
+    import gestion_trabajos.modulos.trabajos.aplicacion.comandos.cancelar_vigencia_rechazada  # noqa: F401
+    import gestion_trabajos.modulos.trabajos.aplicacion.comandos.confirmar_asignacion  # noqa: F401
     import gestion_trabajos.modulos.trabajos.aplicacion.comandos.crear_trabajo  # noqa: F401
     import gestion_trabajos.modulos.trabajos.aplicacion.queries.obtener_trabajo  # noqa: F401
     import gestion_trabajos.modulos.trabajos.aplicacion.queries.obtener_trabajos_por_estado  # noqa: F401

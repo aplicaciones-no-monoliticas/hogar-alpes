@@ -25,3 +25,20 @@ class RepositorioAcreditaciones(ABC):
         """Los eventos crudos del agregado, en orden — la evidencia de que el
         Event Sourcing es consultable (CA de la especificación §9)."""
         ...
+
+
+class RepositorioVigenciaPorProveedor(ABC):
+    """Saga (Entrega 5, D4): proyección de lectura interna, propia de
+    Acreditación. Responde «¿este proveedor sigue vigente para esta
+    categoría?» en una sola consulta indexada, sin tocar el event store."""
+
+    @abstractmethod
+    def consultar(self, proveedor_id: str, categoria: str) -> dict | None:
+        ...
+
+    @abstractmethod
+    def upsert(self, proveedor_id: str, categoria: str, estado: str,
+               vigente_hasta: str, version: int):
+        """Idempotente y tolerante al desorden: se aplica solo si `version` es
+        mayor que la almacenada."""
+        ...
