@@ -629,6 +629,37 @@ org.apache.avro.AvroTypeException: Invalid default for field trabajo_id: "" not 
 
 **Corrección:** los cuatro campos, en los nueve archivos donde existen (`contratos/v1/` × 2 más las siete copias locales), pasan a `default=None, required_default=True)`, igual que el resto del contrato. En el código que construye estos mensajes, donde antes se omitía el campo confiando en el default (`CandidatosIdentificados`, `SinCandidatos`, `AcreditacionActualizada` del tipo `actualizada`), ahora se pasa explícitamente `''` — así el valor que viaja por cable sigue siendo el que documentan `data-model.md`/`contracts/` ("vacío"), no `null`.
 
+### 7 · `escenario-6.sh` (y su traducción a Kubernetes) ya no es compatible con la saga de US-01
+
+Al correr `escenarios/escenario-6-k8s.sh` a escala real (N=1000, T=5min) contra el clúster,
+CA-6.4 falló: solo 623 de los 1050 seguimientos esperados (N + las 50 peticiones de la
+medición de latencia) se crearon. La causa **no es de Kubernetes**: el paso "cambios de
+estado" del guion hace `PUT /trabajos/{id}/estado {"estado":"EMPAREJANDO"}` a mano, simulando
+una transición — un mecanismo escrito antes de que existiera la saga de US-01
+(`specs/002-saga-asignacion-trabajo/`). Con la saga ya fusionada, Gestión de Trabajos mueve el
+`estado` automáticamente (`CREADO→EMPAREJANDO→ASIGNADO` o `→CANCELADO`) en cuanto Emparejamiento
+y Acreditación responden — casi siempre **antes** de que el `PUT` manual del guion llegue.
+Reproducido a mano:
+
+```
+POST /trabajos → 202, estado=CREADO
+PUT /trabajos/{id}/estado {"estado":"EMPAREJANDO"} → 409 "No se puede pasar de CANCELADO a EMPAREJANDO"
+```
+
+La saga ya había resuelto el trabajo (a `CANCELADO`, sin candidatos disponibles en el entorno
+de prueba) antes de que el `PUT` manual del guion corriera. `_publicar_via_http` en
+`herramientas/generador_carga.py` cuenta esto como una publicación "fallida" aunque el `POST`
+inicial sí haya creado el trabajo — de ahí que "574 publicados, 573 fallaron" conviva con 623
+seguimientos reales creados en el sistema.
+
+**No se corrigió aquí**: el mecanismo del `PUT` manual es compartido por `escenario-6.sh`
+(Compose) y `escenario-6-k8s.sh` — el defecto es del guion original, preexistente a esta
+historia, no algo que la traducción a Kubernetes introdujo. Corregirlo (por ejemplo, dejar que
+la saga complete la transición sola en vez de forzarla, o tolerar el 409 como "ya transicionó")
+es trabajo aparte que toca el guion compartido, fuera del alcance de US-03. CA-6.1, CA-6.2,
+CA-6.3 y CA-6.6 — los que sí prueban lo que esta historia necesita demostrar (disponibilidad
+en Kubernetes) — pasaron limpio en las dos corridas (demo N=60 y N=1000).
+
 **Verificado sin broker** (2026-09-21): `AvroSchema(cls)` seguido de `fastavro.parse_schema(json.loads(...))` sobre los 9 archivos (2 contratos canónicos + 7 copias locales) — los 9 parsean sin excepción. Las 163 pruebas de `pytest` de los cuatro servicios tocados y `saga_log` siguen en verde. **Pendiente:** confirmar el registro real contra el broker (`docker compose up -d --build` + `herramientas/verificar_contratos.py`, T005/T061/T062).
 
 **Lección para la próxima entrega:** ningún campo Avro nuevo debería declararse sin al menos construir su `AvroSchema(...)` una vez en una prueba (no hace falta un broker, `fastavro.parse_schema` ya detecta este defecto) — la regla de INF-0 ("todo campo `Tipo(default=..., required_default=True)`") implícitamente exige `default=None` para tipos `String`/`Long`/`Array`, no cualquier valor falsy.
@@ -749,3 +780,29 @@ podía haber detectado sin un clúster real — Principio VI):
    (los registros mostraban `ruok` respondido), pero `bin/pulsar-zookeeper-ruok.sh` y
    `pulsar-admin brokers healthcheck` tardan más de 1s en una JVM recién arrancada. Corrección:
    `timeoutSeconds: 10` explícito en ambos probes.
+
+### 8 · `escenario-8-k8s.sh` (paso c) mostró throughput DECRECIENTE al escalar copias — sin resource requests/limits
+
+En la corrida a escala moderada (5000 proveedores, 400 trabajos), CA-8.3 falló de una forma
+que merece atención propia: el throughput de drenaje **bajó** al agregar copias del consumidor
+(k=1 → 9 trabajos/s, k=2 → 3 trabajos/s, k=4 → 1 trabajo/s), justo lo opuesto a lo que muestra
+`escenario-8.sh` en Compose (throughput casi lineal). La corrida reducida (500 proveedores, 100
+trabajos) sí escaló correctamente (6 → 10 trabajos/s). La diferencia entre ambas corridas es el
+volumen, no el mecanismo.
+
+**Hipótesis más probable (no confirmada con métricas del clúster — no se instaló
+`metrics-server` en esta historia)**: ningún `Deployment` de `infra/k8s/servicios/` declara
+`resources.requests`/`resources.limits`. El clúster son 3 nodos `t3.large` (2 vCPU cada uno) ya
+ocupados por ~30 pods (5 postgres, ZooKeeper, 2 bookies, 2 brokers, 16 pods de aplicación). Sin
+reservas de CPU, escalar el consumidor de 1 a 4 copias no le da más CPU dedicada: reparte el
+mismo CPU saturado entre más procesos, y agrega el costo de scheduling/contención de cada copia
+nueva sin aumentar la capacidad real disponible — el resultado observado es consistente con esa
+explicación, aunque no se verificó con `kubectl top` (API de métricas no disponible sin
+`metrics-server`, fuera del alcance de lo que esta historia instala).
+
+**No se ocultó ni se forzó un PASA**: CA-8.3 se reporta como FALLA en
+`docs/resultados/escenario-8-k8s-20260921-170245.md`, con el hallazgo completo. Corregirlo
+(agregar `resources.requests`/`limits` a los `Deployment` de `infra/k8s/servicios/` e instalar
+`metrics-server` para poder confirmarlo con datos) es trabajo de seguimiento, no algo que se
+pueda resolver ajustando el guion de verificación — el guion está midiendo correctamente un
+comportamiento real del clúster tal como está configurado hoy.
