@@ -119,11 +119,20 @@ else
     "GET /trabajos/$t1 -> proveedor_id=$proveedor1 (esperado no vacío)"
 
   estado_saga1="$(campo_saga "$t1" estado)"
-  n_pasos1="$(pasos_de "$t1" | wc -l | tr -d ' ')"
+  pasos1="$(pasos_de "$t1")"
+  n_pasos1="$(echo "$pasos1" | grep -c . || true)"
   criterio CASO-1c "$([ "$estado_saga1" = COMPLETADA ] && echo 0 || echo 1)" \
     "GET /sagas/$t1 -> estado=$estado_saga1 (esperado COMPLETADA)"
-  criterio CASO-1d "$([ "$n_pasos1" = 4 ] && echo 0 || echo 1)" \
-    "GET /sagas/$t1 -> ${n_pasos1} paso(s) (esperados 4)"
+  # No se compara contra un número exacto de pasos: GT publica un
+  # estado-cambiado→EMPAREJANDO separado de la creación (D2 de research.md,
+  # visibilidad en el registro de sagas) y Emparejamiento sigue publicando
+  # candidatos-identificados además de proveedor-propuesto (D1, no rompe
+  # GET /candidatos). Lo que sí es una garantía dura del camino feliz es que
+  # AMBOS pasos de avance clave aparecen.
+  tiene_propuesto1="$(echo "$pasos1" | grep -c 'proveedor-propuesto' || true)"
+  tiene_confirmada1="$(echo "$pasos1" | grep -c 'vigencia-confirmada' || true)"
+  criterio CASO-1d "$([ "${tiene_propuesto1:-0}" -ge 1 ] && [ "${tiene_confirmada1:-0}" -ge 1 ] && echo 0 || echo 1)" \
+    "GET /sagas/$t1 -> ${n_pasos1} paso(s) totales; proveedor-propuesto=${tiene_propuesto1:-0}, vigencia-confirmada=${tiene_confirmada1:-0} (esperados >= 1 cada uno)"
 fi
 
 # ------------------------------------------------------------- Caso 2 (CA-1.3)
@@ -143,9 +152,14 @@ else
   estado_saga2="$(campo_saga "$t2" estado)"
   criterio CASO-2b "$([ "$estado_saga2" = COMPENSADA ] && echo 0 || echo 1)" \
     "GET /sagas/$t2 -> estado=$estado_saga2 (esperado COMPENSADA)"
-  reversiones2="$(pasos_de "$t2" | grep -c '^REVERSION' || true)"
-  criterio CASO-2c "$([ "${reversiones2:-0}" -ge 1 ] && echo 0 || echo 1)" \
-    "GET /sagas/$t2 -> ${reversiones2:-0} paso(s) de reversión (esperado >= 1: candidatos-liberados y/o vigencia-rechazada)"
+  # OJO: NO basta con contar pasos con direccion=REVERSION — el propio
+  # trabajo.estado-cambiado→CANCELADO final ya cuenta como REVERSION en
+  # cualquier caso cancelado (incluido SIN_CANDIDATOS, que no compensa nada
+  # real). La prueba de que SÍ hubo una reserva que deshacer es la presencia
+  # explícita de vigencia-rechazada o candidatos-liberados.
+  compensacion2="$(pasos_de "$t2" | grep -cE 'vigencia-rechazada|candidatos-liberados' || true)"
+  criterio CASO-2c "$([ "${compensacion2:-0}" -ge 1 ] && echo 0 || echo 1)" \
+    "GET /sagas/$t2 -> ${compensacion2:-0} paso(s) de vigencia-rechazada/candidatos-liberados (esperado >= 1; si es 0 seguramente no había un proveedor ACREDITADA vigente disponible para reservar)"
 fi
 
 # ------------------------------------------------------------- Caso 3 (CA-1.4)
@@ -162,11 +176,18 @@ else
     "GET /trabajos/$t3 -> estado=$estado3 (esperado CANCELADO directo)"
 
   estado_saga3="$(campo_saga "$t3" estado)"
-  n_pasos3="$(pasos_de "$t3" | wc -l | tr -d ' ')"
+  pasos3="$(pasos_de "$t3")"
+  n_pasos3="$(echo "$pasos3" | grep -c . || true)"
   criterio CASO-3b "$([ "$estado_saga3" = COMPENSADA ] && echo 0 || echo 1)" \
     "GET /sagas/$t3 -> estado=$estado_saga3 (esperado COMPENSADA)"
-  criterio CASO-3c "$([ "$n_pasos3" = 2 ] && echo 0 || echo 1)" \
-    "GET /sagas/$t3 -> ${n_pasos3} paso(s) (esperados 2: creado, cancelado)"
+  # No se compara contra un total exacto de pasos, por la misma razón que
+  # CASO-1d (GT publica un estado-cambiado→EMPAREJANDO separado). La garantía
+  # dura de SIN_CANDIDATOS es que NUNCA llegó a reservarse ni liberarse nadie:
+  # sin-candidatos presente, y ningún paso de reserva/liberación/vigencia.
+  tiene_sin_candidatos3="$(echo "$pasos3" | grep -c 'sin-candidatos' || true)"
+  sin_reserva3="$(echo "$pasos3" | grep -cE 'proveedor-propuesto|candidatos-liberados|vigencia-' || true)"
+  criterio CASO-3c "$([ "${tiene_sin_candidatos3:-0}" -ge 1 ] && [ "${sin_reserva3:-0}" = 0 ] && echo 0 || echo 1)" \
+    "GET /sagas/$t3 -> ${n_pasos3} paso(s) totales; sin-candidatos=${tiene_sin_candidatos3:-0}, pasos de reserva/vigencia=${sin_reserva3:-0} (esperado sin-candidatos >= 1 y 0 pasos de reserva/vigencia — nunca se llegó a proponer un proveedor)"
 fi
 
 # ------------------------------------------------------------- Caso 4 (CA-1.5)
