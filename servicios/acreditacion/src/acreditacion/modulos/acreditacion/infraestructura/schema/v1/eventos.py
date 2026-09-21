@@ -53,5 +53,5 @@ class AcreditacionActualizada(Record):
     # consumidor. Una versión menor o igual a la almacenada se ignora.
     version = Long(default=None, required_default=True)
     # --- saga (Entrega 5) ---
-    trabajo_id = String(default='', required_default=True)
-    categoria = String(default='', required_default=True)
+    trabajo_id = String(default=None, required_default=True)
+    categoria = String(default=None, required_default=True)
