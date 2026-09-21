@@ -1,0 +1,112 @@
+# NOTA: los anclas YAML (&/*) no cruzan documentos separados por "---" — cada
+# Deployment repite su lista de variables completa a propósito, en vez de
+# depender de un mecanismo que kubectl/kustomize no garantiza entre documentos.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gestion-trabajos-api
+  labels: { app: gestion-trabajos-api, tier: app }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: gestion-trabajos-api }
+  template:
+    metadata:
+      labels: { app: gestion-trabajos-api, tier: app, servicio: gestion-trabajos }
+    spec:
+      containers:
+        - name: gestion-trabajos
+          image: PLACEHOLDER_ECR/hogar-alpes/gestion-trabajos:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-trabajos-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "gestion-trabajos"
+            - name: MODO
+              value: "api"
+            - name: ADAPTADOR_TRABAJOS
+              value: "postgres"
+            - name: WORKERS
+              value: "2"
+            - name: RUTA_REGLAS_REGIONALES
+              value: "/app/config/reglas_regionales.json"
+          ports:
+            - containerPort: 5000
+              name: http
+          volumeMounts:
+            - name: reglas-regionales
+              mountPath: /app/config
+              readOnly: true
+          readinessProbe:
+            httpGet: { path: /health, port: 5000 }
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: 5000 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+      volumes:
+        - name: reglas-regionales
+          configMap: { name: reglas-regionales }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gestion-trabajos-api
+  labels: { app: gestion-trabajos-api }
+spec:
+  selector: { app: gestion-trabajos-api }
+  ports:
+    - port: 5000
+      name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gestion-trabajos-consumidor
+  labels: { app: gestion-trabajos-consumidor, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: gestion-trabajos-consumidor }
+  template:
+    metadata:
+      labels: { app: gestion-trabajos-consumidor, tier: app, servicio: gestion-trabajos }
+    spec:
+      containers:
+        - name: gestion-trabajos-consumidor
+          image: PLACEHOLDER_ECR/hogar-alpes/gestion-trabajos:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-trabajos-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "gestion-trabajos"
+            - name: MODO
+              value: "consumidor"
+            - name: ADAPTADOR_TRABAJOS
+              value: "postgres"
+            - name: RUTA_REGLAS_REGIONALES
+              value: "/app/config/reglas_regionales.json"
+          volumeMounts:
+            - name: reglas-regionales
+              mountPath: /app/config
+              readOnly: true
+          # Sin API HTTP (R5-16): el probe solo puede confirmar que el proceso
+          # del consumidor sigue vivo (no que esté consumiendo de verdad — eso
+          # requeriría instrumentar servicios/*, fuera de alcance porque esta
+          # historia no toca código de dominio, plan.md §Constitution Check).
+          # La detección de un consumidor "colgado pero vivo" se hace desde
+          # afuera, releyendo el backlog/tasa de ack de su suscripción con
+          # pulsar-admin en escenarios/recuperacion-k8s.sh — no desde este
+          # probe. Ver contracts/comandos-despliegue.md.
+          livenessProbe:
+            exec: { command: ["pgrep", "-f", "consumidor"] }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+      volumes:
+        - name: reglas-regionales
+          configMap: { name: reglas-regionales }

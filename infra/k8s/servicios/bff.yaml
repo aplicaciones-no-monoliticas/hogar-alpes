@@ -1,0 +1,61 @@
+# BFF (US-02): único punto de entrada, sin base de datos, sin broker, SIN
+# NetworkPolicy que lo bloquee hacia adentro (ver infra/k8s/red/allow-bff.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bff
+  labels: { app: bff, tier: app }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: bff }
+  template:
+    metadata:
+      labels: { app: bff, tier: app }
+    spec:
+      containers:
+        - name: bff
+          image: PLACEHOLDER_ECR/hogar-alpes/bff:PLACEHOLDER_TAG
+          env:
+            - name: URL_TRABAJOS
+              value: "http://gestion-trabajos-api:5000"
+            - name: URL_OPERACIONES
+              value: "http://operaciones-api:5000"
+            - name: URL_ACREDITACION
+              value: "http://acreditacion-api:5000"
+            - name: URL_EMPAREJAMIENTO
+              value: "http://emparejamiento-api:5000"
+            - name: URL_SAGAS
+              value: "http://saga-log-api:5000"
+            - name: TIMEOUT_REENVIO_S
+              value: "5"
+            - name: TIMEOUT_COMPUESTO_S
+              value: "1.5"
+            - name: WORKERS
+              value: "2"
+            - name: THREADS
+              value: "8"
+          ports:
+            - containerPort: 5000
+              name: http
+          readinessProbe:
+            httpGet: { path: /health, port: 5000 }
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: 5000 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff
+  labels: { app: bff }
+spec:
+  type: LoadBalancer
+  selector: { app: bff }
+  ports:
+    - port: 80
+      targetPort: 5000
+      name: http

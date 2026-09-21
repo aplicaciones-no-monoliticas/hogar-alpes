@@ -1,0 +1,62 @@
+# Excepción por base: solo los pods del servicio dueño (label "servicio")
+# pueden conectarse a su propia base — igual que la red Docker dedicada de
+# cada servicio en docker-compose.yml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gestion-trabajos-to-db
+spec:
+  podSelector: { matchLabels: { app: postgres-trabajos } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { servicio: gestion-trabajos } }
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-operaciones-to-db
+spec:
+  podSelector: { matchLabels: { app: postgres-operaciones } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { servicio: operaciones } }
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acreditacion-to-db
+spec:
+  podSelector: { matchLabels: { app: postgres-acreditacion } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { servicio: acreditacion } }
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-emparejamiento-to-db
+spec:
+  podSelector: { matchLabels: { app: postgres-emparejamiento } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { servicio: emparejamiento } }
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-saga-log-to-db
+spec:
+  podSelector: { matchLabels: { app: postgres-saga } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { servicio: saga-log } }
+      ports: [{ protocol: TCP, port: 5432 }]

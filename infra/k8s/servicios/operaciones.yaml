@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operaciones-api
+  labels: { app: operaciones-api, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: operaciones-api }
+  template:
+    metadata:
+      labels: { app: operaciones-api, tier: app, servicio: operaciones }
+    spec:
+      containers:
+        - name: operaciones
+          image: PLACEHOLDER_ECR/hogar-alpes/operaciones:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-operaciones-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "operaciones"
+            - name: MODO
+              value: "api"
+          ports:
+            - containerPort: 5000
+              name: http
+          readinessProbe:
+            httpGet: { path: /health, port: 5000 }
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: 5000 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: operaciones-api
+  labels: { app: operaciones-api }
+spec:
+  selector: { app: operaciones-api }
+  ports:
+    - port: 5000
+      name: http
+---
+# El reactor del escenario 6/CA-3.20: se baja a cero con
+# `kubectl scale deployment/operaciones-consumidor --replicas=0` y la API sigue respondiendo.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operaciones-consumidor
+  labels: { app: operaciones-consumidor, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: operaciones-consumidor }
+  template:
+    metadata:
+      labels: { app: operaciones-consumidor, tier: app, servicio: operaciones }
+    spec:
+      containers:
+        - name: operaciones-consumidor
+          image: PLACEHOLDER_ECR/hogar-alpes/operaciones:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-operaciones-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "operaciones"
+            - name: MODO
+              value: "consumidor"
+          livenessProbe:
+            exec: { command: ["pgrep", "-f", "consumidor"] }
+            initialDelaySeconds: 10
+            periodSeconds: 20

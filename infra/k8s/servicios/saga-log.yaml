@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saga-log-api
+  labels: { app: saga-log-api, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: saga-log-api }
+  template:
+    metadata:
+      labels: { app: saga-log-api, tier: app, servicio: saga-log }
+    spec:
+      containers:
+        - name: saga-log
+          image: PLACEHOLDER_ECR/hogar-alpes/saga-log:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-saga-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "saga_log"
+            - name: MODO
+              value: "api"
+          ports:
+            - containerPort: 5000
+              name: http
+          readinessProbe:
+            httpGet: { path: /health, port: 5000 }
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: 5000 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: saga-log-api
+  labels: { app: saga-log-api }
+spec:
+  selector: { app: saga-log-api }
+  ports:
+    - port: 5000
+      name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saga-log-consumidor
+  labels: { app: saga-log-consumidor, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: saga-log-consumidor }
+  template:
+    metadata:
+      labels: { app: saga-log-consumidor, tier: app, servicio: saga-log }
+    spec:
+      containers:
+        - name: saga-log-consumidor
+          image: PLACEHOLDER_ECR/hogar-alpes/saga-log:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-saga-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "saga_log"
+            - name: MODO
+              value: "consumidor"
+          livenessProbe:
+            exec: { command: ["pgrep", "-f", "consumidor"] }
+            initialDelaySeconds: 10
+            periodSeconds: 20

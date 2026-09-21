@@ -83,6 +83,19 @@ parte no obligue a tocar las demás.
 
 ## Cómo desplegar los servicios
 
+Hay **dos formas** de desplegar el sistema completo, y las dos se mantienen (US-03):
+
+| Camino | Cuándo conviene |
+|---|---|
+| **Docker Compose** (esta sección) | Trabajo del día a día, desarrollo local, depurar algo puntual — arranca en minutos, en la máquina de quien sea |
+| **Kubernetes sobre AWS** (`infra/k8s/README.md`) | Probar el sistema en condiciones parecidas a producción: varios nodos, almacenamiento persistente real, componentes que se recuperan solos ante una caída — pensado para la sustentación y para validar disponibilidad, no para el día a día |
+
+Ninguna reemplaza a la otra: Compose sigue siendo el camino rápido, Kubernetes es el que
+demuestra que el sistema sobrevive a perder un nodo o un proceso sin que nadie lo reinicie a
+mano.
+
+### Docker Compose
+
 1. Tener **Docker** instalado (con el complemento de Compose).
 2. Clonar el repositorio.
 3. Opcional: copiar `.env.example` a `.env` — todas las variables ya traen un valor por defecto.

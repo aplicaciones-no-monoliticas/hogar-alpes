@@ -1,0 +1,57 @@
+# Solo el BFF alcanza a los cinco servicios de dominio por HTTP — y solo
+# hacia ellos (FR-009, CA-3.12). Ningún servicio de dominio se alcanza a sí
+# mismo por esta regla porque el origen es exclusivamente app=bff.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bff-to-gestion-trabajos
+spec:
+  podSelector: { matchLabels: { app: gestion-trabajos-api } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: bff } } }]
+      ports: [{ protocol: TCP, port: 5000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bff-to-operaciones
+spec:
+  podSelector: { matchLabels: { app: operaciones-api } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: bff } } }]
+      ports: [{ protocol: TCP, port: 5000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bff-to-acreditacion
+spec:
+  podSelector: { matchLabels: { app: acreditacion-api } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: bff } } }]
+      ports: [{ protocol: TCP, port: 5000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bff-to-emparejamiento
+spec:
+  podSelector: { matchLabels: { app: emparejamiento-api } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: bff } } }]
+      ports: [{ protocol: TCP, port: 5000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bff-to-saga-log
+spec:
+  podSelector: { matchLabels: { app: saga-log-api } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: bff } } }]
+      ports: [{ protocol: TCP, port: 5000 }]

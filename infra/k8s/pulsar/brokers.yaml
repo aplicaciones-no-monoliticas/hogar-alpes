@@ -1,0 +1,86 @@
+# Brokers — 2 réplicas, sin PVC (no persisten datos, data-model.md). El
+# Service "broker" balancea entre las dos; los servicios de dominio se
+# conectan a él, no a un pod puntual.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broker
+  labels: { app: broker, tier: pulsar }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: broker }
+  template:
+    metadata:
+      labels: { app: broker, tier: pulsar }
+    spec:
+      containers:
+        - name: broker
+          image: apachepulsar/pulsar:3.2.2
+          command: ["bash", "-c"]
+          args:
+            - >
+              bin/apply-config-from-env.py conf/broker.conf &&
+              exec bin/pulsar broker
+          env:
+            - name: clusterName
+              value: "cluster-hda"
+            - name: zookeeperServers
+              value: "zookeeper:2181"
+            - name: metadataStoreUrl
+              value: "zk:zookeeper:2181"
+            - name: configurationMetadataStoreUrl
+              value: "zk:zookeeper:2181"
+            - name: POD_IP
+              valueFrom:
+                fieldRef: { fieldPath: status.podIP }
+            - name: advertisedAddress
+              value: "$(POD_IP)"
+            - name: internalListenerName
+              value: "internal"
+            - name: advertisedListeners
+              value: "internal:pulsar://$(POD_IP):6650"
+            - name: managedLedgerDefaultEnsembleSize
+              value: "2"
+            - name: managedLedgerDefaultWriteQuorum
+              value: "2"
+            - name: managedLedgerDefaultAckQuorum
+              value: "2"
+            - name: allowAutoTopicCreation
+              value: "false"
+            - name: brokerDeleteInactiveTopicsEnabled
+              value: "false"
+            - name: PULSAR_MEM
+              value: "-Xms512m -Xmx1g -XX:MaxDirectMemorySize=512m"
+          ports:
+            - containerPort: 6650
+              name: pulsar
+            - containerPort: 8080
+              name: admin
+          readinessProbe:
+            exec:
+              command: ["bash", "-c", "bin/pulsar-admin brokers healthcheck"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 20
+          livenessProbe:
+            exec:
+              command: ["bash", "-c", "bin/pulsar-admin brokers healthcheck"]
+            initialDelaySeconds: 45
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker
+  labels: { app: broker }
+spec:
+  selector: { app: broker }
+  ports:
+    - port: 6650
+      name: pulsar
+    - port: 8080
+      name: admin

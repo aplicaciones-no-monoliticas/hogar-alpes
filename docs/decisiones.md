@@ -632,3 +632,120 @@ org.apache.avro.AvroTypeException: Invalid default for field trabajo_id: "" not 
 **Verificado sin broker** (2026-09-21): `AvroSchema(cls)` seguido de `fastavro.parse_schema(json.loads(...))` sobre los 9 archivos (2 contratos canónicos + 7 copias locales) — los 9 parsean sin excepción. Las 163 pruebas de `pytest` de los cuatro servicios tocados y `saga_log` siguen en verde. **Pendiente:** confirmar el registro real contra el broker (`docker compose up -d --build` + `herramientas/verificar_contratos.py`, T005/T061/T062).
 
 **Lección para la próxima entrega:** ningún campo Avro nuevo debería declararse sin al menos construir su `AvroSchema(...)` una vez en una prueba (no hace falta un broker, `fastavro.parse_schema` ya detecta este defecto) — la regla de INF-0 ("todo campo `Tipo(default=..., required_default=True)`") implícitamente exige `default=None` para tipos `String`/`Long`/`Array`, no cualquier valor falsy.
+
+## US-03 · Despliegue en Kubernetes sobre AWS
+
+### 1 · `kustomize` (entornos reducido/completo) se simplificó a un flag de `desplegar.sh`
+
+`research.md` (Decisión 1) proponía `kustomize` con overlays `reducido/`/`completo/` para las
+diferencias de tamaño entre entornos. Al implementar, se optó por algo más simple: un solo
+conjunto de manifiestos con las copias del entorno "completo" como valor por defecto, y
+`infra/k8s/desplegar.sh <entorno>` hace `kubectl scale` sobre las tres copias no esenciales
+(`gestion-trabajos-api`, `emparejamiento-api`, `bff`) cuando se pide `reducido`. Con 12
+componentes de aplicación, dos overlays de `kustomize` agregaban más indirección de la que
+resolvían; el flag es explícito y se lee en una línea. Si el número de diferencias entre
+entornos crece, esto se puede migrar a `kustomize` sin tocar los manifiestos base.
+
+### 2 · Comprobación de salud de los consumidores: solo "vivo", no "consumiendo de verdad"
+
+R5-16 pedía una comprobación de salud para los procesos consumidores (sin API HTTP) que
+detectara un consumidor "colgado". Instrumentar eso de verdad (un archivo de latido que el
+propio proceso actualice cada vez que procesa un mensaje) requeriría tocar el código de
+`servicios/*/consumidor.py`, y el plan de esta historia fija explícitamente que **ningún**
+servicio de dominio se modifica (Constitution Check, Principio III). Se optó por un
+`livenessProbe` que solo confirma que el proceso Python sigue vivo (`pgrep -f consumidor`) —
+reinicia el proceso si murió, pero no detecta uno vivo que dejó de consumir. La detección de
+"colgado pero vivo" se hace desde afuera, en `escenarios/recuperacion-k8s.sh` y
+`escenarios/disponibilidad-k8s.sh`, releyendo el backlog/tasa de ack de la suscripción con
+`pulsar-admin` — un consumidor que no mueve su backlog se ve ahí, aunque el pod siga `Running`.
+Documentado explícitamente en vez de ocultarlo detrás de un probe que aparentaría cubrir más de
+lo que cubre.
+
+### 3 · Los brokers publican `advertisedAddress = $(POD_IP)` (no un nombre estable)
+
+Los brokers no tienen `PersistentVolumeClaim` ni identidad estable (son un `Deployment`, no un
+`StatefulSet`); cada uno anuncia su propia IP de pod, que sí es enrutable dentro de la VPC (VPC
+CNI asigna IPs de la VPC a cada pod). Un pod de broker que se reinicia cambia de IP, y los
+clientes que tenían cacheada la IP vieja la redescubren en el siguiente *lookup* — es el mismo
+comportamiento que ya tolera el cliente de Pulsar ante un broker caído en Compose.
+
+### 4 · `escenarios/red-k8s.sh` daba falsos PASA la primera vez — Principio VI en vivo
+
+Al correr `red-k8s.sh` contra el clúster real por primera vez, los 40 intentos de conexión
+prohibida (bases + HTTP entre servicios) dieron "falla" — pero también las 5 comprobaciones de
+control positivo (BFF → cada servicio), que debían dar 200 y no lo dieron. Eso era la señal de
+que el guion no estaba probando nada: usaba `sh -c "echo > /dev/tcp/..."`, y el `sh` de las
+imágenes `python:3.11-slim` es `dash`, que no implementa la redirección `/dev/tcp` de bash — el
+comando fallaba con `Directory nonexistent` **antes** de intentar ninguna conexión de red. Los
+20 "PASA" de aislamiento de base de datos y los 20 de aislamiento HTTP eran indistinguibles de
+si la política funcionaba o no: exactamente el escenario que R5-12 advierte ("declarado pero no
+aplicado, el peor de los dos mundos") — solo que aquí era el *guion de verificación* el que no
+verificaba nada, no la política.
+
+**Corrección**: `bash -c "echo > /dev/tcp/..."` en vez de `sh -c`, confirmando primero contra un
+objetivo que SÍ debía conectar (`gestion-trabajos` → su propia base) que el método en sí
+funciona. Con la corrección, las 5 comprobaciones de control positivo (BFF → cada servicio)
+pasan a dar 200 como se esperaba, y las 40 de aislamiento siguen en "falla" — ahora sí
+verificado contra un método que demostrablemente puede detectar una conexión que sí pasa.
+
+**Lección**: un guion de verificación que da 100% PASA en su primera corrida, sin ningún
+control positivo que también pase, merece sospecha — es la misma idea que ya dejó el defecto de
+`default=''` en Avro (docs/decisiones.md arriba): una prueba que nunca puede fallar no prueba
+nada.
+
+### 5 · `kubectl get pod -l ...` justo después de un `rollout restart` puede devolver un pod que ya no existe
+
+`escenarios/pais-nuevo-k8s.sh` y `escenarios/adaptador-persistencia-k8s.sh` hacían
+`kubectl get pod -l app=gestion-trabajos-api -o jsonpath='{.items[0].metadata.name}'`
+inmediatamente después de que `kubectl rollout status` reportara "successfully rolled out", y
+luego `kubectl exec` sobre ese nombre — que a veces daba `Error from server (NotFound)`. Causa:
+un `Deployment` de 2 réplicas con `RollingUpdate` (`maxSurge`/`maxUnavailable` = 1 por defecto)
+pasa por un estado transitorio con 3 pods (el viejo terminando + 2 nuevos) incluso después de
+que el rollout ya se reporta completo; el selector de label sigue devolviendo el pod viejo hasta
+que el API server termina de purgarlo, y ese pod puede desaparecer entre el `get` y el `exec`
+siguiente. **Corrección**: agregar `--field-selector=status.phase=Running` a ambos guiones.
+
+**Cómo se detectó**: no fue un fallo aleatorio ignorado — el mismo comando corrido a mano,
+paso a paso, funcionaba; solo fallaba dentro del guion completo. Eso llevó a sospechar una
+condición de carrera en vez de un error de lógica, y a reproducirla forzando la secuencia exacta
+del guion para confirmarla antes de corregir (Principio VI: no se corrige lo que no se entendió
+primero).
+
+### 6 · `infra/k8s/destruir.sh` borraba los volúmenes EBS antes que los PVC — dejaba `PersistentVolume` colgados en `Terminating`
+
+Al correr `destruir.sh` contra el clúster real, los `PersistentVolume` (`ReclaimPolicy: Retain`)
+quedaron en `Terminating` sin terminar de irse. Causa: el guion borraba los volúmenes EBS por
+AWS CLI y luego hacía `kubectl delete pv --all`, pero nunca borraba los `PersistentVolumeClaim`
+—un `StatefulSet` eliminado **no** borra sus PVC por diseño de Kubernetes—, así que el
+finalizer `kubernetes.io/pv-protection` de cada PV seguía activo (el PVC que lo referenciaba
+seguía existiendo) justo cuando el volumen EBS de atrás ya no existía. **Corrección**: agregar
+`kubectl delete pvc --all` antes de borrar los volúmenes EBS y los PV. Verificado en el clúster
+real: tras el ajuste, los 8 PV (5 postgres + zookeeper + 2 bookies) y sus PVC terminan de
+eliminarse limpio.
+
+### Verificación ejecutada (2026-09-21, aprovisionando AWS real con credenciales del curso)
+
+| Qué | Resultado |
+|---|---|
+| Clúster EKS `hogar-alpes-eks` (us-east-1, 3× t3.large) | Creado con Terraform; node group y add-ons (VPC CNI, EBS CSI vía IRSA, CoreDNS, kube-proxy) sanos |
+| Calico (policy-only sobre VPC CNI) | Instalado, `calico-node`/`calico-kube-controllers`/`calico-typha` Running |
+| 6 imágenes publicadas en ECR, tag `be22c68` | Confirmado con `aws ecr describe-images` |
+| 5× PostgreSQL, ZooKeeper, 2× bookie, 2× broker | Running, sanos, sin reinicios tras el ajuste de `PGDATA`/`fsGroup`/timeouts de probes (ver abajo) |
+| `pulsar-cluster-init` y `pulsar-topology-init` (Jobs) | Complete — tenant, 3 namespaces, tópicos particionados y suscripciones, cuota de backlog verificada releyendo el broker |
+| 6 servicios de dominio (API + consumidor) + BFF | Running, 0 reinicios desde el primer despliegue de los manifiestos corregidos |
+| Colección Postman del BFF contra el `Service` `LoadBalancer` | PASA · 47 requests, 107 assertions, 0 fallos (incluye saga completa y trazabilidad) |
+| `escenarios/red-k8s.sh` (aislamiento de red, CA-3.11-3.14) | PASA · 45/45, incluido el control positivo BFF→servicios |
+
+**Tres defectos de infraestructura encontrados y corregidos contra el clúster real** (ninguno se
+podía haber detectado sin un clúster real — Principio VI):
+
+1. **PostgreSQL sobre EBS**: `initdb` falla porque el volumen nuevo trae `lost+found` en su
+   raíz. Corrección: `PGDATA=/var/lib/postgresql/data/pgdata` (subdirectorio, no la raíz del
+   volumen) en los 5 `StatefulSet`.
+2. **ZooKeeper/bookies sobre EBS**: la imagen corre como uid 10000/gid 0; un volumen nuevo se
+   monta `root:root 0755` sin permiso de escritura para el grupo. Corrección:
+   `securityContext.fsGroup: 0` a nivel de pod en `zookeeper.yaml` y `bookies.yaml`.
+3. **Probes `exec` de ZooKeeper/broker con timeout por defecto (1s)**: el proceso estaba sano
+   (los registros mostraban `ruok` respondido), pero `bin/pulsar-zookeeper-ruok.sh` y
+   `pulsar-admin brokers healthcheck` tardan más de 1s en una JVM recién arrancada. Corrección:
+   `timeoutSeconds: 10` explícito en ambos probes.

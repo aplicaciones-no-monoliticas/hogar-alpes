@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-saga
+  labels: { app: postgres-saga, tier: db }
+spec:
+  serviceName: postgres-saga
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres-saga }
+  template:
+    metadata:
+      labels: { app: postgres-saga, tier: db }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: postgres-saga-credenciales, key: usuario } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-saga-credenciales, key: password } }
+            - name: PGDATA
+              value: "/var/lib/postgresql/data/pgdata"
+            - name: POSTGRES_DB
+              value: "saga_log"
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "$(POSTGRES_USER)"] }
+            periodSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "$(POSTGRES_USER)"] }
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-saga
+  labels: { app: postgres-saga }
+spec:
+  clusterIP: None
+  selector: { app: postgres-saga }
+  ports:
+    - port: 5432
+      name: postgres

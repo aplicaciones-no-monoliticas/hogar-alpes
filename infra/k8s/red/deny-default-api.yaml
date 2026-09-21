@@ -1,0 +1,46 @@
+# Default-deny de ingreso para las seis API de dominio: por defecto, ningún
+# pod las alcanza. La única excepción es el BFF (allow-bff.yaml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default-gestion-trabajos-api
+spec:
+  podSelector: { matchLabels: { app: gestion-trabajos-api } }
+  policyTypes: ["Ingress"]
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default-operaciones-api
+spec:
+  podSelector: { matchLabels: { app: operaciones-api } }
+  policyTypes: ["Ingress"]
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default-acreditacion-api
+spec:
+  podSelector: { matchLabels: { app: acreditacion-api } }
+  policyTypes: ["Ingress"]
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default-emparejamiento-api
+spec:
+  podSelector: { matchLabels: { app: emparejamiento-api } }
+  policyTypes: ["Ingress"]
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-default-saga-log-api
+spec:
+  podSelector: { matchLabels: { app: saga-log-api } }
+  policyTypes: ["Ingress"]
+  ingress: []

@@ -1,0 +1,39 @@
+# Cono Sur NO se aplica por defecto (mismo patrón que el profile "conosur" de
+# docker-compose.yml): se agrega EN CALIENTE durante el escenario de región
+# nueva (CA-3.22) con:
+#
+#   kubectl exec deploy/gestion-trabajos-api -- bash /infra/agregar-region.sh conosur   (o Job puntual)
+#   kubectl apply -f infra/k8s/servicios/emparejamiento-conosur.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emparejamiento-conosur
+  labels: { app: emparejamiento-conosur, tier: app, region: conosur }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: emparejamiento-conosur }
+  template:
+    metadata:
+      labels: { app: emparejamiento-conosur, tier: app, servicio: emparejamiento, region: conosur }
+    spec:
+      containers:
+        - name: emparejamiento-conosur
+          image: PLACEHOLDER_ECR/hogar-alpes/emparejamiento:PLACEHOLDER_TAG
+          env:
+            - name: DATABASE_URI
+              valueFrom: { secretKeyRef: { name: postgres-emparejamiento-credenciales, key: database_uri } }
+            - name: BROKER_HOST
+              valueFrom: { configMapKeyRef: { name: variables-comunes, key: BROKER_HOST } }
+            - name: SERVICIO
+              value: "emparejamiento"
+            - name: MODO
+              value: "consumidor"
+            - name: ROL_CONSUMIDOR
+              value: "regional"
+            - name: REGION
+              value: "conosur"
+          livenessProbe:
+            exec: { command: ["pgrep", "-f", "consumidor"] }
+            initialDelaySeconds: 10
+            periodSeconds: 20
